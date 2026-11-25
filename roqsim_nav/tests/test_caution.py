@@ -525,3 +525,157 @@ def test_a_mover_does_not_wait_before_it_has_ever_been_blocked(tmp_path):
             assert not probe.blocked, "it held despite never having been blocked"
     finally:
         engine.shutdown()
+
+
+# -- setting off again ---------------------------------------------------------------------------
+# What a held mover may set off into is judged against its body, not its rays: the rays look at one
+# height, from the mover's circumscribed radius out, and a body can stand in its way below that
+# height or inside that radius. Each test holds the cart for a blocker its rays see, then puts one
+# they cannot see where the cart would meet it.
+
+#: A robot whose base is lower than the cart's scan plane (0.10 m, its band's floor plus 5 cm) and
+#: which shows the plane only a post, narrower than the rays' spacing: a TurtleBot's shape.
+LOW_ROBOT = """<mujoco model="low_robot">
+  <worldbody><body name="base">
+    <geom name="base" type="cylinder" size=".2 .03" pos="0 0 .03"/>
+    <geom name="post" type="cylinder" size=".03 .2" pos="0 0 .26"/>
+  </body></worldbody>
+</mujoco>"""
+
+#: A slim body as tall as the cart: the rays see it wherever they pass through it.
+POST = """<mujoco model="post">
+  <worldbody><body name="base"><geom name="g" type="cylinder" size=".06 .25" pos="0 0 .25"/></body>
+  </worldbody>
+</mujoco>"""
+
+
+def _held_world(tmp_path, blocker_xml, *, clear_time=0.0):
+    """The cart of :func:`_world`, and a driven blocker in its way at the origin."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    navigator = {
+        "speed": 0.8,
+        "goals": [list(GOAL)],
+        "obstacle_height": [0.05, 0.6],
+        "recovery": {"enabled": True, "stuck_time": 0.5},
+        "avoidance": {"lookahead": 1.0, "clear_time": clear_time},
+    }
+    cart = {
+        "spawn_model": {
+            "model": _write(tmp_path, "crate.xml", CRATE),
+            "motion": "driven",
+            "pose": {"position": {"x": START[0], "y": START[1], "z": 0.25}},
+        },
+        "name": "cart",
+        "components": [{"navigator": navigator}],
+    }
+    blocker = {
+        "spawn_model": {
+            "model": _write(tmp_path, "blocker.xml", blocker_xml),
+            "prefix": "b_",
+            "motion": "driven",
+        },
+        "name": "blocker",
+    }
+    return load_config_from_dict(
+        {
+            "sim": {"pacing": "asap", "world": _write(tmp_path, "corridor.xml", CORRIDOR)},
+            "components": [cart, blocker],
+        },
+        base_dir=tmp_path,
+    )
+
+
+def _place(engine, xy, name="blocker"):
+    engine.ctx.data.mocap_pos[_mocapid(engine, name)][:2] = xy
+
+
+def _held_engine(tmp_path, blocker_xml, **kw):
+    engine = Engine(_held_world(tmp_path, blocker_xml, **kw))
+    engine.setup()
+    engine.reset()
+    _run(engine, 6.0)
+    assert _navigator(engine)._caution.blocked, "the cart never held for the blocker"
+    return engine
+
+
+def test_a_held_mover_does_not_set_off_into_a_base_below_its_rays(tmp_path):
+    """The blocker shifts so its post stands between two rays; its base is still in the way."""
+    engine = _held_engine(tmp_path, LOW_ROBOT)
+    try:
+        held = _xy(engine)
+        _place(engine, (0.0, 0.075))  # the post between the rays at 0 and 0.15 m
+        _run(engine, 3.0)
+        assert _xy(engine) == pytest.approx(held, abs=0.01), "it set off into the robot's base"
+        assert _navigator(engine)._caution.blocked
+
+        _place(engine, (0.0, 8.0))  # and once it has gone, the way is open
+        _run(engine, 3.0)
+        assert _xy(engine)[0] > held[0] + 1.0, "it never set off after the robot left"
+    finally:
+        engine.shutdown()
+
+
+def test_a_held_mover_does_not_set_off_into_a_body_beside_its_front(tmp_path):
+    """A body between the cart's front and its circumscribed radius, where no ray starts."""
+    engine = _held_engine(tmp_path, POST)
+    try:
+        held = _xy(engine)
+        probe = _navigator(engine)._caution
+        # The cart's front is 0.25 m ahead of its centre and its rays start at its circumscribed
+        # radius, 0.43 m; the post spans 0.28 to 0.40 m ahead, 0.12 to 0.24 m to the side.
+        assert probe.footprint_radius(engine.ctx, held) > 0.41
+        _place(engine, held + np.array([0.34, 0.18]))
+        _run(engine, 3.0)
+        assert _xy(engine) == pytest.approx(held, abs=0.01), "it set off into the post"
+    finally:
+        engine.shutdown()
+
+
+def test_a_held_mover_sets_off_past_a_body_clear_of_its_corridor(tmp_path):
+    """Beside the cart and clear of the corridor it stops for, the robot is not in the way."""
+    engine = _held_engine(tmp_path, LOW_ROBOT)
+    try:
+        held = _xy(engine)
+        _place(engine, held + np.array([0.3, 0.52]))  # base edge 0.32 m to the side, corridor's 0.3
+        _run(engine, 3.0)
+        assert _xy(engine)[0] > held[0] + 1.0, "it held for a robot clear of its corridor"
+    finally:
+        engine.shutdown()
+
+
+def _release_time(tmp_path, sweep: bool) -> float:
+    """When the cart sets off after the low robot has driven across its way and on."""
+    engine = _held_engine(tmp_path, LOW_ROBOT, clear_time=0.5)
+    try:
+        probe = _navigator(engine)._caution
+        if not sweep:
+            probe._sweep = lambda *a: []  # the release as it was decided on the rays alone
+        start, held = engine.ctx.sim_time, _xy(engine)
+        while engine.ctx.sim_time < start + 8.0:
+            # Across the way at 0.15 m/s, sideways out of it.
+            _place(engine, (0.0, CROSSING * (engine.ctx.sim_time - start)))
+            engine.step()
+            if np.linalg.norm(_xy(engine) - held) > 1e-3:
+                return engine.ctx.sim_time - start
+        raise AssertionError("it never set off")
+    finally:
+        engine.shutdown()
+
+
+#: How fast the low robot crosses: slowly enough that its base is still in the corridor when the
+#: settle after its post has left the rays is over.
+CROSSING = 0.15
+
+
+def test_a_robot_that_drives_across_and_on_is_held_for_until_its_base_has_left(tmp_path):
+    """Held for as long as its base is in the corridor and ``clear_time`` after, not its post.
+
+    The base (0.2 m) leaves the 0.6 m corridor when the robot's centre is 0.5 m to the side; its
+    post, all the rays see, 0.17 m before that. Setting off on the rays alone, the cart would pass
+    the base closer than it stops for.
+    """
+    base_out = (0.3 + 0.2) / CROSSING
+    with_sweep = _release_time(tmp_path / "a", sweep=True)
+    rays_only = _release_time(tmp_path / "b", sweep=False)
+    assert rays_only < base_out, "the fixture no longer separates the post from the base"
+    assert with_sweep == pytest.approx(base_out + 0.5, abs=0.06)  # within a navigator tick

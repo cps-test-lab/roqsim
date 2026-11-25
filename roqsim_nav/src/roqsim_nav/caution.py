@@ -24,6 +24,22 @@ so a mover that merely re-planned would compute the identical path and drive bac
 obstacle. A remembered blockage is temporary on purpose -- an obstacle that moved on must stop being
 a wall, or a mover would inherit a map of everything that ever got in its way.
 
+**Setting off again is judged against the body, not the rays.** The rays are a cheap, early answer
+to "is something coming into my way", and they are blind in two places a held mover's body is not: at
+every height but one, and between the mover's front and the ray origins, which sit on its
+circumscribed radius (a walker's is its pelvis capsule's bounding sphere, 0.34 m, where its body ends
+at 0.16 m). A robot whose base is lower than the scan plane shows the rays only its tower, narrower
+than their spacing; one standing beside the mover's front shows them nothing. Either can stand in the
+mover's way while every ray reads clear, and a mover that sets off on the rays alone walks into it.
+So before a held mover sets off, :meth:`CautionProbe._sweep` also asks whether the corridor it held
+for is empty, filled in rather than sampled: ``width`` across, the same width it stops for, from its
+body's front to the end of the probe's reach, and from the floor to the top of its own body. Nothing that
+moves may reach into it, each thing measured by an extent never smaller than itself, so a mover that
+passes this check sets off with at least the clearance it stops for; what moves into the way
+afterwards is for the rays, as before. The check runs only to end a hold, so a mover that was never
+held moves exactly as it did. A robot that drives across a mover's way and on is held for until its
+body, not only the part the rays see, has left the corridor.
+
 Cost matters here, because this runs on the same thread as everything else: it is a handful of rays
 at the navigator's tick rate, and none at all when the mover is not moving. :mod:`roqsim.raycast` is
 single-threaded on purpose (its docstring documents an ``mjData`` stack race that corrupts an
@@ -142,6 +158,16 @@ class CautionProbe:
         self._clear_since: float | None = None
         self._blocked_since: float | None = None
         self._was_blocked = False
+        #: The mover's own geoms, as an array for :meth:`_sweep`; which of them collide is read
+        #: when it runs, because presence switches a geom's collision off and on at runtime.
+        self._body = np.zeros(0, dtype=int)
+        #: Geoms of everything else that moves and is not ignored: what the sweep looks for. Built on
+        #: first use, after ``ignore`` is resolved.
+        self._others: np.ndarray | None = None
+        #: Whether the last check held the mover for the filled-in corridor rather than for a ray.
+        #: While it does, the corridor is looked at every tick, so the settle runs from the moment
+        #: it cleared rather than from whichever tick it happened to be looked at.
+        self._sweep_held = False
         #: Last verdict, for status reporting and tests.
         self.blocked = False
         #: World xy of the NEAREST blocking hit of the last :meth:`check`, or ``None``. What
@@ -186,6 +212,8 @@ class CautionProbe:
         self._own = set(entity_geoms(ctx.model, entity, strict=False))
         bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body or "")
         self._footprint = subtree_geoms(ctx.model, bid) if bid >= 0 else set()
+        self._body = np.array(sorted(self._own), dtype=int)
+        self._others = None
 
     def resolve_ignored(self, ctx) -> None:
         """Resolve ``ignore`` once every entity in the world has registered itself.
@@ -208,12 +236,14 @@ class CautionProbe:
             # The whole entity, so `ignore: [walker]` takes a walker's limbs with its pelvis.
             ignored |= set(entity_geoms(model, other, strict=False))
         self._ignored = ignored
+        self._others = None
         self._resolved = True
 
     def reset(self) -> None:
         self._clear_since = None
         self._blocked_since = None
         self._was_blocked = False
+        self._sweep_held = False
         self.blocked = False
         self.blocker_xy = None
         self.blocker_points = []
@@ -230,7 +260,8 @@ class CautionProbe:
         """Whether the mover should hold still this tick.
 
         Returns ``True`` while blocked, including during the ``clear_time`` settle after the way
-        opens again.
+        opens again, and for as long as something reaches into the corridor filled in when that
+        settle is over (:meth:`_sweep`); then the settle runs again from the moment it is clear.
         """
         if not self.enabled:
             return False
@@ -266,7 +297,22 @@ class CautionProbe:
             if not self._was_blocked:
                 self.blocked = False
                 return False
+        held = self.blocked
         self.blocked = (now - self._clear_since) < self.clear_time
+        if self._sweep_held or (held and not self.blocked):
+            # About to set off, or held for the corridor already: the rays have said it is open,
+            # and they cannot see everything the body would meet (the module docstring). Only
+            # then: a mover under way is not looked at this way, so one never held walks as before.
+            points = self._sweep(ctx, origin_xy, heading)
+            self._sweep_held = bool(points)
+            if points:
+                self._clear_since = now
+                self.blocked = True
+                self.blocker_points = points
+                self.blocker_xy = min(
+                    points, key=lambda p: float(np.linalg.norm(p - np.asarray(origin_xy)))
+                )
+                return True
         if not self.blocked:
             # Only once the way is open AND has stayed open: a clear ray during the settle is not
             # the same as being through, and treating it as such re-arms the yield window on every
@@ -291,6 +337,73 @@ class CautionProbe:
                 d = float(np.linalg.norm(data.geom_xpos[g][:2] - origin))
                 self._radius = max(self._radius, d + float(model.geom_rbound[g]))
         return self._radius
+
+    def _sweep(self, ctx, origin_xy, heading: float) -> list:
+        """World xy of what lies in the corridor the mover holds for; ``[]`` if none.
+
+        One point per geom found, where its extent comes nearest the mover's centre.
+
+        The corridor is the one the rays sample, filled in: in the mover's heading frame, ``width``
+        across (the body plus the clearance it keeps, as for stopping), from the front of the
+        mover's collidable geoms to the end of the probe's reach (its radius plus ``lookahead``),
+        and in height everything those geoms span, from the floor up. From its front, not its
+        centre: what stands on the mover, or beside its flank, is not ahead of it. Setting off is judged by the same width as
+        stopping, so a mover does not leave a hold to pass closer to something than it would have
+        stopped for.
+
+        What is looked for is every collidable geom of a body with degrees of freedom or a mocap
+        body -- the bodies the rays stop for -- other than the mover's own, the ignored ones and what
+        the mover holds (a body an active weld or connect ties to one of its own, which moves with
+        it). Each is taken by its extent along the frame's three axes, exact for a sphere, capsule,
+        cylinder and box and the bounding box for any other shape, which can find one in the
+        corridor that is not, never miss one that is. It counts when it reaches into the corridor
+        by more than a millimetre, so that what rests flush on the mover is not in its way.
+
+        A mover none of whose geoms can collide meets nothing, and is never held by this.
+        """
+        model, data = ctx.model, ctx.data
+        body = self._body[(model.geom_contype[self._body] | model.geom_conaffinity[self._body]) > 0]
+        others = self._candidates(model)
+        if body.size == 0 or others.size == 0:
+            return []
+        others = others[
+            ((model.geom_contype[others] | model.geom_conaffinity[others]) > 0)
+            & (raycast.VISIBLE_GROUPS[model.geom_group[others]] > 0)
+        ]
+        held = _held_bodies(model, data, self._body)
+        if held:
+            others = others[~np.isin(model.geom_bodyid[others], list(held))]
+        if others.size == 0:
+            return []
+        cos, sin = math.cos(heading), math.sin(heading)
+        axes = np.array([[cos, sin, 0.0], [-sin, cos, 0.0], [0.0, 0.0, 1.0]])
+        origin = np.array([float(origin_xy[0]), float(origin_xy[1]), 0.0])
+        own_c, own_r = _extents(model, data, body, axes, origin)
+        half = self.width / 2.0
+        own_lo, own_hi = own_c - own_r, own_c + own_r
+        reach = self.footprint_radius(ctx, origin_xy) + self.lookahead
+        lo = np.array([own_hi[:, 0].max(), -half, own_lo[:, 2].min()])
+        hi = np.array([reach, half, own_hi[:, 2].max()])
+        c, r = _extents(model, data, others, axes, origin)
+        meets = np.all((c + r > lo + _TOUCH) & (c - r < hi - _TOUCH), axis=1)
+        # Where each is nearest the mover, not its centre: what `reroute` marks and recovery backs
+        # away from. A long barrier's centre is not where the mover meets it.
+        near = np.clip(np.zeros(3), c[meets] - r[meets], c[meets] + r[meets])
+        return [origin[:2] + p[0] * axes[0, :2] + p[1] * axes[1, :2] for p in near]
+
+    def _candidates(self, model) -> np.ndarray:
+        """Every geom of a body that moves, other than the mover's own and the ignored ones."""
+        if self._others is None:
+            skip = self._own | self._ignored
+            self._others = np.array(
+                [
+                    g
+                    for g in range(model.ngeom)
+                    if g not in skip and is_dynamic_body(model, int(model.geom_bodyid[g]))
+                ],
+                dtype=int,
+            )
+        return self._others
 
     def _hits(self, ctx, origin_xy, z: float, heading: float):
         """``((distance, world_xy) | None, [world_xy, ...])`` for the corridor ahead.
@@ -343,3 +456,60 @@ class CautionProbe:
             if nearest is None or dist < nearest[0]:
                 nearest = (dist, point)
         return nearest, points
+
+
+
+#: How far two extents must overlap to meet: a millimetre, so that what rests flush on a mover's top
+#: is not counted as in its way.
+_TOUCH = 1e-3
+
+
+def _held_bodies(model, data, own_geoms) -> set[int]:
+    """Bodies an active weld or connect ties to one of the mover's own bodies: what it holds."""
+    if model.neq == 0:
+        return set()
+    own = {int(model.geom_bodyid[g]) for g in own_geoms}
+    held = set()
+    for i in np.flatnonzero(data.eq_active):
+        if int(model.eq_type[i]) not in (mujoco.mjtEq.mjEQ_WELD, mujoco.mjtEq.mjEQ_CONNECT):
+            continue
+        if int(model.eq_objtype[i]) == mujoco.mjtObj.mjOBJ_SITE:
+            a = int(model.site_bodyid[model.eq_obj1id[i]])
+            b = int(model.site_bodyid[model.eq_obj2id[i]])
+        else:
+            a, b = int(model.eq_obj1id[i]), int(model.eq_obj2id[i])
+        if a in own and b not in own:
+            held.add(b)
+        elif b in own and a not in own:
+            held.add(a)
+    # A held body takes what hangs from it along: a tote's lid, a tray's load.
+    roots = {int(model.body_rootid[b]) for b in held}
+    return {b for b in range(model.nbody) if int(model.body_rootid[b]) in roots and b != 0}
+
+
+def _extents(model, data, geoms, axes, origin):
+    """Centre and half extent of each geom along ``axes``, measured from ``origin``.
+
+    Exact for a sphere, a capsule, a cylinder and a box: a capsule reaches its half length times how
+    far its axis leans onto the frame's axis, plus its radius; a cylinder its half length so, plus its
+    radius times how far it leans off; a box the sum of its half sizes weighted by how far each of its
+    axes leans on. Any other shape is taken as its bounding box in its own frame (``geom_aabb``) the
+    same way a box is, which can be larger than it, never smaller.
+    """
+    rot = data.geom_xmat[geoms].reshape(-1, 3, 3)
+    size = model.geom_size[geoms]
+    gtype = model.geom_type[geoms]
+    aabb = model.geom_aabb[geoms]
+    centre = data.geom_xpos[geoms] + np.einsum("nij,nj->ni", rot, aabb[:, :3])
+    lean = np.abs(np.einsum("kj,nji->nki", axes, rot))  # (n, frame axis, geom axis)
+    half = np.einsum("nki,ni->nk", lean, aabb[:, 3:])
+    sphere = gtype == mujoco.mjtGeom.mjGEOM_SPHERE
+    half[sphere] = size[sphere, :1]
+    capsule = gtype == mujoco.mjtGeom.mjGEOM_CAPSULE
+    half[capsule] = lean[capsule, :, 2] * size[capsule, 1:2] + size[capsule, :1]
+    cyl = gtype == mujoco.mjtGeom.mjGEOM_CYLINDER
+    off = np.sqrt(np.clip(1.0 - lean[cyl, :, 2] ** 2, 0.0, 1.0))
+    half[cyl] = lean[cyl, :, 2] * size[cyl, 1:2] + off * size[cyl, :1]
+    box = gtype == mujoco.mjtGeom.mjGEOM_BOX
+    half[box] = np.einsum("nki,ni->nk", lean[box], size[box])
+    return (centre - origin) @ axes.T, half
