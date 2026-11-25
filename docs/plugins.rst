@@ -575,15 +575,15 @@ while a re-routing one has quietly changed a trajectory the experiment may have 
 
 A held mover sets off again only when the **corridor** it holds for is clear, which the rays alone
 cannot tell: they look at one height and start at the mover's circumscribed radius, so a robot whose
-base is below the scan plane, or one standing beside the mover's front, can be in its way while every
-ray reads clear. When the ``clear_time`` settle is over, the probe also checks the corridor filled in:
-``width`` across, the same width it stops for, from the front of the mover's body to the end of the
-probe's reach, from the bottom of the body to its top (the floor, for a mover standing on it). While a collidable geom of anything that moves
-reaches into it, the mover holds and settles again, so it never sets off to pass something closer than
-it would have stopped for. What the mover holds by a weld moves with it and is not looked for. The
-check runs only to end a hold, so a mover that was never held moves as it did; one held for a robot
-that drives across its way and on waits until the robot's body, not only what the rays see of it, has
-left the corridor.
+base is below the scan plane, or one standing beside the mover's front, can be in its way while
+every ray reads clear. When the ``clear_time`` settle is over, the probe also checks the corridor
+filled in: ``width`` across, the same width it stops for, from the front of the mover's body to the
+end of the probe's reach, from the bottom of the body to its top (the floor, for a mover standing on
+it). While a collidable geom of anything that moves reaches into it, the mover holds and settles
+again, so it never sets off to pass something closer than it would have stopped for. What the mover
+holds by a weld moves with it and is not looked for. The check runs only to end a hold of the
+rays, so a mover they never held moves as it did; one held for a robot that drives across its way and on waits
+until the robot's body, not only what the rays see of it, has left the corridor.
 
 ``reroute`` is the opt-in that changes that: it remembers where it was stopped as a disc that
 expires, and plans around it. The memory is what makes it work -- the grid is static, so a mover that

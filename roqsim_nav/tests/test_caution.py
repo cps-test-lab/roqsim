@@ -725,7 +725,7 @@ MAT = """<mujoco model="mat">
 
 
 def test_a_mover_the_rays_never_held_is_not_held_by_the_corridor(tmp_path):
-    """The settle at the start of a move is no hold: what only the corridor sees does not stop it."""
+    """A mover the rays never held is not swept: a loose mat beside its way does not stop it."""
     beside_its_way = {"position": {"x": START[0] + 0.9, "y": 0.2, "z": 0.0}}
     engine = Engine(
         _held_world(

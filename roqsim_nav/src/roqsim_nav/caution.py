@@ -25,20 +25,21 @@ obstacle. A remembered blockage is temporary on purpose -- an obstacle that move
 a wall, or a mover would inherit a map of everything that ever got in its way.
 
 **Setting off again is judged against the body, not the rays.** The rays are a cheap, early answer
-to "is something coming into my way", and they are blind in two places a held mover's body is not: at
-every height but one, and between the mover's front and the ray origins, which sit on its
-circumscribed radius (a walker's is its pelvis capsule's bounding sphere, 0.34 m, where its body ends
-at 0.16 m). A robot whose base is lower than the scan plane shows the rays only its tower, narrower
-than their spacing; one standing beside the mover's front shows them nothing. Either can stand in the
-mover's way while every ray reads clear, and a mover that sets off on the rays alone walks into it.
-So before a held mover sets off, :meth:`CautionProbe._sweep` also asks whether the corridor it held
-for is empty, filled in rather than sampled: ``width`` across, the same width it stops for, from its
-body's front to the end of the probe's reach, and from the bottom of its own body to its top (the floor, for a mover standing on it). Nothing that
-moves may reach into it, each thing measured by an extent never smaller than itself, so a mover that
-passes this check sets off with at least the clearance it stops for; what moves into the way
-afterwards is for the rays, as before. The check runs only to end a hold of the rays, so a mover they never
-held moves exactly as it did. A robot that drives across a mover's way and on is held for until its
-body, not only the part the rays see, has left the corridor.
+to "is something coming into my way", and they are blind in two places a held mover's body is not:
+at every height but one, and between the mover's front and the ray origins, which sit on its
+circumscribed radius (a walker's is its pelvis capsule's bounding sphere, 0.34 m, where its body
+ends at 0.16 m). A robot whose base is lower than the scan plane shows the rays only its tower,
+narrower than their spacing; one standing beside the mover's front shows them nothing. Either can
+stand in the mover's way while every ray reads clear, and a mover that sets off on the rays alone
+walks into it. So before a held mover sets off, :meth:`CautionProbe._sweep` also asks whether the
+corridor it held for is empty, filled in rather than sampled: ``width`` across, the same width it
+stops for, from its body's front to the end of the probe's reach, and from the bottom of its own
+body to its top (the floor, for a mover standing on it). Nothing that moves may reach into it, each
+thing measured by an extent never smaller than itself, so a mover that passes this check sets off
+with at least the clearance it stops for; what moves into the way afterwards is for the rays, as
+before. The check runs only to end a hold of the rays, so a mover they never held moves exactly as
+it did. A robot that drives across a mover's way and on is held for until its body, not only the
+part the rays see, has left the corridor.
 
 Cost matters here, because this runs on the same thread as everything else: it is a handful of rays
 at the navigator's tick rate, and none at all when the mover is not moving. :mod:`roqsim.raycast` is
@@ -357,10 +358,10 @@ class CautionProbe:
         The corridor is the one the rays sample, filled in: in the mover's heading frame, ``width``
         across (the body plus the clearance it keeps, as for stopping), from the front of the
         mover's collidable geoms to the end of the probe's reach (its radius plus ``lookahead``),
-        and in height everything those geoms span, from their bottom (the floor, for a mover standing on it) up. From its front, not its
-        centre: what stands on the mover, or beside its flank, is not ahead of it. Setting off is
-        judged by the same width as stopping, so a mover does not leave a hold to pass closer to
-        something than it would have stopped for.
+        and in height everything those geoms span, from their bottom (the floor, for a mover
+        standing on it) up. From its front, not its centre: what stands on the mover, or beside its
+        flank, is not ahead of it. Setting off is judged by the same width as stopping, so a mover
+        does not leave a hold to pass closer to something than it would have stopped for.
 
         What is looked for is every collidable geom of a body with degrees of freedom or a mocap
         body -- the bodies the rays stop for -- other than the mover's own, the ignored ones and what
