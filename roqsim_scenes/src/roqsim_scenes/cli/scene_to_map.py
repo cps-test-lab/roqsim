@@ -267,29 +267,32 @@ def _slice_segments(
 
 
 _F32 = float(np.finfo(np.float32).eps)
+_EDGE_CELLS = 1e-3
 
 
-def _edge(v: float, res: float) -> float:
-    """How close to a cell edge, in cells, a coordinate v counts as on it.
+def _edge(scale: float, res: float) -> float:
+    """How close to a cell edge, in cells, a coordinate counts as on it, in a map reaching |scale| m.
 
-    MuJoCo keeps mesh vertices as float32, so a mesh face meant at -5.1 m is at -5.0999999046 m:
-    a few float32 steps of |v|. A few micrometres at a centimetre-scale cell, far below any offset a
-    scene means.
+    A face meant on an edge is off it by the float32 MuJoCo keeps mesh vertices in -- a step of the
+    mesh's own coordinate, which can be larger than the world one once its pose is applied -- and by
+    an asset's authoring noise, some 1e-5 m in the shipped meshes. 1e-3 cells covers both, and the
+    float32 step of the map's extent covers a map larger than that; either is micrometres to a
+    hundredth of a cell, far below any offset a scene means.
     """
-    return 4 * _F32 * (abs(v) + 1.0) / res
+    return max(_EDGE_CELLS, 8 * _F32 * (abs(scale) + 1.0) / res)
 
 
-def _cell(v: float, origin: float, res: float) -> int:
+def _cell(v: float, origin: float, res: float, edge: float = _EDGE_CELLS) -> int:
     """The index of the cell [origin + i*res, origin + (i+1)*res) holding v.
 
     Rounded down, not truncated, so a point left of the origin is outside the map; and a point on a
     cell's edge in metres is on it as a float too, where an origin of -5.1 - 0.3 puts 5.0 m at
     207.99999999999997 cells.
     """
-    return int(np.floor((v - origin) / res + _edge(v, res)))
+    return int(np.floor((v - origin) / res + edge))
 
 
-def _cells(v: float, origin: float, res: float) -> tuple[int, ...]:
+def _cells(v: float, origin: float, res: float, edge: float = _EDGE_CELLS) -> tuple[int, ...]:
     """The cells a wall face at v occupies: the one holding it, and on a cell's edge both beside it.
 
     A face has no width, and a slice does not say which side of it the solid is on. On an edge one
@@ -298,19 +301,19 @@ def _cells(v: float, origin: float, res: float) -> tuple[int, ...]:
     """
     f = (v - origin) / res
     k = round(f)
-    if abs(f - k) < _edge(v, res):
+    if abs(f - k) < edge:
         return (k - 1, k)
     return (int(np.floor(f)),)
 
 
-def _raster(segs, origin, res, w, hgt) -> np.ndarray:
+def _raster(segs, origin, res, w, hgt, edge: float = _EDGE_CELLS) -> np.ndarray:
     grid = np.full((hgt, w), _UNKNOWN, dtype=np.uint8)
     for p, q in segs:  # Bresenham-ish: sample along the segment at sub-cell spacing
         n = max(2, int(np.linalg.norm(q - p) / (res * 0.5)) + 1)
         for t in np.linspace(0, 1, n):
             x, y = p + t * (q - p)
-            for cy in _cells(y, origin[1], res):
-                for cx in _cells(x, origin[0], res):
+            for cy in _cells(y, origin[1], res, edge):
+                for cx in _cells(x, origin[0], res, edge):
                     if 0 <= cx < w and 0 <= cy < hgt:
                         grid[cy, cx] = _OCC
     return grid
@@ -392,8 +395,9 @@ def main(argv: list | None = None) -> int:
         geometry = _load_scene(args.scene)
     origin = np.array(args.origin) if args.origin else lo - args.pad
     far = hi + args.pad
-    w = int(np.ceil((far[0] - origin[0]) / args.resolution - _edge(far[0], args.resolution)))
-    hgt = int(np.ceil((far[1] - origin[1]) / args.resolution - _edge(far[1], args.resolution)))
+    edge = _edge(float(np.max(np.abs([*origin, *far]))), args.resolution)
+    w = int(np.ceil((far[0] - origin[0]) / args.resolution - edge))
+    hgt = int(np.ceil((far[1] - origin[1]) / args.resolution - edge))
 
     segs = []
     for verts, faces in geometry:
@@ -405,13 +409,13 @@ def main(argv: list | None = None) -> int:
             "is empty at that plane -- do not ship an all-unknown map."
         )
 
-    grid = _raster(segs, origin, args.resolution, w, hgt)
+    grid = _raster(segs, origin, args.resolution, w, hgt, edge)
     occ_before = int((grid == _OCC).sum())
     grid = _flood(
         grid,
         (
-            _cell(args.free_from[0], origin[0], args.resolution),
-            _cell(args.free_from[1], origin[1], args.resolution),
+            _cell(args.free_from[0], origin[0], args.resolution, edge),
+            _cell(args.free_from[1], origin[1], args.resolution, edge),
         ),
     )
 

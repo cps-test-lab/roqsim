@@ -44,3 +44,16 @@ def test_a_mesh_face_stored_as_float32_on_an_edge_occupies_both_cells():
     assert _occupied_columns(face) == _occupied_columns(-5.1) == {5, 6}
     assert _occupied_columns(-float(np.float32(5.1))) == {5, 6}
     assert _occupied_columns(float(np.float32(5.1))) == {209, 210}
+
+
+def test_a_posed_mesh_face_on_an_edge_occupies_both_cells():
+    # A mesh in a body at x = 17.45 m with a face at local x = -17.45 m: its float32 vertex puts the
+    # face at -7.6e-7 m, a step of the local coordinate, not of the world one.
+    face = float(np.float32(-17.45)) + 17.45
+    assert face != 0.0
+    assert _occupied_columns(face) == _occupied_columns(0.0) == {107, 108}
+
+
+def test_authoring_noise_in_an_asset_stays_on_the_edge():
+    # One family of faces in a shipped mesh lies within 4e-5 m of each other.
+    assert _occupied_columns(-5.0 + 3.7e-5) == _occupied_columns(-5.0 - 3.7e-5) == {7, 8}
