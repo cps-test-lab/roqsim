@@ -47,6 +47,12 @@ EXACT_AHEAD = 0.15
 EXACT_SLOW = 0.3
 
 
+#: The share of what a mover's own speed covers in ``stuck_time`` below which a mover too slow to
+#: cover ``stuck_eps`` counts as stuck (:meth:`NavCore.stuck_eps`). Half: a mover easing round a
+#: corner or slowing onto a goal still makes it, one that has stopped does not.
+_SLOW_PROGRESS = 0.5
+
+
 @dataclass
 class NavParams:
     """Navigation / recovery tuning (sane defaults; overridable per mover)."""
@@ -185,7 +191,22 @@ class NavCore:
             return False  # not enough history yet
         xs = np.array([[x, y] for _, x, y in self._hist])
         travelled = float(np.linalg.norm(xs - self._pos, axis=1).max())
-        return travelled < self.p.stuck_eps
+        return travelled < self.stuck_eps()
+
+    def stuck_eps(self) -> float:
+        """Less progress than this (m) over ``stuck_time`` is stuck: ``stuck_eps``, or for a mover
+        whose own speed covers less than that in ``stuck_time``, :data:`_SLOW_PROGRESS` of what it
+        does cover.
+
+        A fixed distance reads a slow mover's pace as a wedge: walking its route freely, it never
+        covers ``stuck_eps`` in the window, so every window ends in a recovery that backs it off
+        against its heading, and it walks backwards off its route. Scaled to its speed, it walks its
+        route at that speed, a slow mover that stops is still caught, and a mover at speed 0 -- asked
+        to make no progress -- is never stuck and stands. From ``stuck_eps / (_SLOW_PROGRESS *
+        stuck_time)`` up (0.13 m/s by default) the threshold is ``stuck_eps`` as given.
+        """
+        own = _SLOW_PROGRESS * max(float(self.st.speed), 0.0) * self.p.stuck_time
+        return min(self.p.stuck_eps, own)
 
     def start_recovery(self) -> None:
         """Back away from the blocker (or reverse the last heading), then drop the path so the
