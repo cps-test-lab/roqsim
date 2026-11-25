@@ -33,7 +33,7 @@ than their spacing; one standing beside the mover's front shows them nothing. Ei
 mover's way while every ray reads clear, and a mover that sets off on the rays alone walks into it.
 So before a held mover sets off, :meth:`CautionProbe._sweep` also asks whether the corridor it held
 for is empty, filled in rather than sampled: ``width`` across, the same width it stops for, from its
-body's front to the end of the probe's reach, and from the floor to the top of its own body. Nothing that
+body's front to the end of the probe's reach, and from the bottom of its own body to its top (the floor, for a mover standing on it). Nothing that
 moves may reach into it, each thing measured by an extent never smaller than itself, so a mover that
 passes this check sets off with at least the clearance it stops for; what moves into the way
 afterwards is for the rays, as before. The check runs only to end a hold of the rays, so a mover they never
@@ -306,9 +306,8 @@ class CautionProbe:
             if not self._was_blocked:
                 self.blocked = False
                 return False
-        held = self.blocked
         self.blocked = (now - self._clear_since) < self.clear_time
-        if self._sweep_held or (self._ray_held and held and not self.blocked):
+        if self._sweep_held or (self._ray_held and not self.blocked):
             # About to set off after the rays held it, or held for the corridor already: the rays
             # have said it is open, and they cannot see everything the body would meet (the module
             # docstring). Only then: a mover under way, or one the rays never held, is not looked
@@ -358,7 +357,7 @@ class CautionProbe:
         The corridor is the one the rays sample, filled in: in the mover's heading frame, ``width``
         across (the body plus the clearance it keeps, as for stopping), from the front of the
         mover's collidable geoms to the end of the probe's reach (its radius plus ``lookahead``),
-        and in height everything those geoms span, from the floor up. From its front, not its
+        and in height everything those geoms span, from their bottom (the floor, for a mover standing on it) up. From its front, not its
         centre: what stands on the mover, or beside its flank, is not ahead of it. Setting off is
         judged by the same width as stopping, so a mover does not leave a hold to pass closer to
         something than it would have stopped for.

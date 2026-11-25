@@ -163,7 +163,7 @@ holding fixed, which is why stopping is the default and re-routing is asked for.
 
 A held mover sets off again only when the corridor it holds for is clear, filled in rather than
 sampled (`CautionProbe._sweep`): `width` across, from its body's front to the probe's reach, from the
-floor up. The rays look at one height from the mover's circumscribed radius out, so a low robot base or
+bottom of its body up (the floor, for a mover standing on it). The rays look at one height from the mover's circumscribed radius out, so a low robot base or
 a body beside the mover's front can stand in that corridor unseen by them.
 
 `reroute` remembers where it was stopped, as a disc that expires after `forget_after`, and plans
