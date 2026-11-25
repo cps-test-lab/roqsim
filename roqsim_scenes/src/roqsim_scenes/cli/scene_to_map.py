@@ -266,14 +266,24 @@ def _slice_segments(
     return segs
 
 
+def _cell(v: float, origin: float, res: float) -> int:
+    """The index of the cell [origin + i*res, origin + (i+1)*res) holding v.
+
+    Rounded down, not truncated, so a point left of the origin is outside the map; and a point on a
+    cell's edge in metres is on it as a float too, where an origin of -5.1 - 0.3 puts 5.0 m at
+    207.99999999999997 cells.
+    """
+    return int(np.floor((v - origin) / res + 1e-9))
+
+
 def _raster(segs, origin, res, w, hgt) -> np.ndarray:
     grid = np.full((hgt, w), _UNKNOWN, dtype=np.uint8)
     for p, q in segs:  # Bresenham-ish: sample along the segment at sub-cell spacing
         n = max(2, int(np.linalg.norm(q - p) / (res * 0.5)) + 1)
         for t in np.linspace(0, 1, n):
             x, y = p + t * (q - p)
-            cx = int((x - origin[0]) / res)
-            cy = int((y - origin[1]) / res)
+            cx = _cell(x, origin[0], res)
+            cy = _cell(y, origin[1], res)
             if 0 <= cx < w and 0 <= cy < hgt:
                 grid[cy, cx] = _OCC
     return grid
@@ -355,8 +365,8 @@ def main(argv: list | None = None) -> int:
         geometry = _load_scene(args.scene)
     origin = np.array(args.origin) if args.origin else lo - args.pad
     far = hi + args.pad
-    w = int(np.ceil((far[0] - origin[0]) / args.resolution))
-    hgt = int(np.ceil((far[1] - origin[1]) / args.resolution))
+    w = int(np.ceil((far[0] - origin[0]) / args.resolution - 1e-9))
+    hgt = int(np.ceil((far[1] - origin[1]) / args.resolution - 1e-9))
 
     segs = []
     for verts, faces in geometry:
@@ -373,8 +383,8 @@ def main(argv: list | None = None) -> int:
     grid = _flood(
         grid,
         (
-            int((args.free_from[0] - origin[0]) / args.resolution),
-            int((args.free_from[1] - origin[1]) / args.resolution),
+            _cell(args.free_from[0], origin[0], args.resolution),
+            _cell(args.free_from[1], origin[1], args.resolution),
         ),
     )
 
