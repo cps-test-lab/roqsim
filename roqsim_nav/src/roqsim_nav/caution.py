@@ -347,9 +347,9 @@ class CautionProbe:
         across (the body plus the clearance it keeps, as for stopping), from the front of the
         mover's collidable geoms to the end of the probe's reach (its radius plus ``lookahead``),
         and in height everything those geoms span, from the floor up. From its front, not its
-        centre: what stands on the mover, or beside its flank, is not ahead of it. Setting off is judged by the same width as
-        stopping, so a mover does not leave a hold to pass closer to something than it would have
-        stopped for.
+        centre: what stands on the mover, or beside its flank, is not ahead of it. Setting off is
+        judged by the same width as stopping, so a mover does not leave a hold to pass closer to
+        something than it would have stopped for.
 
         What is looked for is every collidable geom of a body with degrees of freedom or a mocap
         body -- the bodies the rays stop for -- other than the mover's own, the ignored ones and what
@@ -456,7 +456,6 @@ class CautionProbe:
             if nearest is None or dist < nearest[0]:
                 nearest = (dist, point)
         return nearest, points
-
 
 
 #: How far two extents must overlap to meet: a millimetre, so that what rests flush on a mover's top
