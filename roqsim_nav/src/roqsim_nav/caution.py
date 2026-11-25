@@ -36,7 +36,7 @@ for is empty, filled in rather than sampled: ``width`` across, the same width it
 body's front to the end of the probe's reach, and from the floor to the top of its own body. Nothing that
 moves may reach into it, each thing measured by an extent never smaller than itself, so a mover that
 passes this check sets off with at least the clearance it stops for; what moves into the way
-afterwards is for the rays, as before. The check runs only to end a hold, so a mover that was never
+afterwards is for the rays, as before. The check runs only to end a hold of the rays, so a mover they never
 held moves exactly as it did. A robot that drives across a mover's way and on is held for until its
 body, not only the part the rays see, has left the corridor.
 
@@ -168,6 +168,9 @@ class CautionProbe:
         #: While it does, the corridor is looked at every tick, so the settle runs from the moment
         #: it cleared rather than from whichever tick it happened to be looked at.
         self._sweep_held = False
+        #: Whether the rays have held the mover since it last set off. Only such a hold is ended by
+        #: :meth:`_sweep`: the settle that runs once at the start of a move is no hold of the rays.
+        self._ray_held = False
         #: Last verdict, for status reporting and tests.
         self.blocked = False
         #: World xy of the NEAREST blocking hit of the last :meth:`check`, or ``None``. What
@@ -244,6 +247,7 @@ class CautionProbe:
         self._blocked_since = None
         self._was_blocked = False
         self._sweep_held = False
+        self._ray_held = False
         self.blocked = False
         self.blocker_xy = None
         self.blocker_points = []
@@ -283,6 +287,7 @@ class CautionProbe:
             if self._blocked_since is None:
                 self._blocked_since = now
             self._was_blocked = True
+            self._ray_held = True
             self.blocked = True
             self.blocker_xy = nearest[1]
             self.blocker_points = points
@@ -299,12 +304,14 @@ class CautionProbe:
                 return False
         held = self.blocked
         self.blocked = (now - self._clear_since) < self.clear_time
-        if self._sweep_held or (held and not self.blocked):
-            # About to set off, or held for the corridor already: the rays have said it is open,
-            # and they cannot see everything the body would meet (the module docstring). Only
-            # then: a mover under way is not looked at this way, so one never held walks as before.
+        if self._sweep_held or (self._ray_held and held and not self.blocked):
+            # About to set off after the rays held it, or held for the corridor already: the rays
+            # have said it is open, and they cannot see everything the body would meet (the module
+            # docstring). Only then: a mover under way, or one the rays never held, is not looked
+            # at this way, so it walks as before.
             points = self._sweep(ctx, origin_xy, heading)
             self._sweep_held = bool(points)
+            self._ray_held = bool(points)
             if points:
                 self._clear_since = now
                 self.blocked = True

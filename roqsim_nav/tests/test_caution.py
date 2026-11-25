@@ -549,8 +549,11 @@ POST = """<mujoco model="post">
 </mujoco>"""
 
 
-def _held_world(tmp_path, blocker_xml, *, clear_time=0.0):
-    """The cart of :func:`_world`, and a driven blocker in its way at the origin."""
+def _held_world(tmp_path, blocker_xml, *, clear_time=0.0, blocker_spawn=None):
+    """The cart of :func:`_world`, and a driven blocker in its way at the origin.
+
+    ``blocker_spawn`` overrides keys of the blocker's ``spawn_model``.
+    """
     tmp_path.mkdir(parents=True, exist_ok=True)
     navigator = {
         "speed": 0.8,
@@ -573,6 +576,7 @@ def _held_world(tmp_path, blocker_xml, *, clear_time=0.0):
             "model": _write(tmp_path, "blocker.xml", blocker_xml),
             "prefix": "b_",
             "motion": "driven",
+            **(blocker_spawn or {}),
         },
         "name": "blocker",
     }
@@ -679,3 +683,31 @@ def test_a_robot_that_drives_across_and_on_is_held_for_until_its_base_has_left(t
     rays_only = _release_time(tmp_path / "b", sweep=False)
     assert rays_only < base_out, "the fixture no longer separates the post from the base"
     assert with_sweep == pytest.approx(base_out + 0.5, abs=0.06)  # within a navigator tick
+
+
+#: A loose mat, lower than the cart's scan plane: the rays pass over it, the corridor holds it.
+MAT = """<mujoco model="mat">
+  <worldbody><body name="base"><geom name="g" type="box" size=".15 .15 .02" pos="0 0 .02"/></body>
+  </worldbody>
+</mujoco>"""
+
+
+def test_a_mover_the_rays_never_held_is_not_held_by_the_corridor(tmp_path):
+    """The settle at the start of a move is no hold: what only the corridor sees does not stop it."""
+    beside_its_way = {"position": {"x": START[0] + 0.9, "y": 0.2, "z": 0.0}}
+    engine = Engine(
+        _held_world(
+            tmp_path,
+            MAT,
+            clear_time=0.5,
+            blocker_spawn={"motion": "physics", "pose": beside_its_way},
+        )
+    )
+    engine.setup()
+    engine.reset()
+    try:
+        start = _xy(engine)
+        _run(engine, 3.0)
+        assert _xy(engine)[0] > start[0] + 1.0, "it held for a mat its rays never stopped it for"
+    finally:
+        engine.shutdown()
