@@ -275,9 +275,10 @@ def _edge(scale: float, res: float) -> float:
 
     A face meant on an edge is off it by the float32 MuJoCo keeps mesh vertices in -- a step of the
     mesh's own coordinate, which can be larger than the world one once its pose is applied -- and by
-    an asset's authoring noise, some 1e-5 m in the shipped meshes. 1e-3 cells covers both, and the
-    float32 step of the map's extent covers a map larger than that; either is micrometres to a
-    hundredth of a cell, far below any offset a scene means.
+    an asset's authoring noise, up to some 1e-4 m in the shipped meshes. 1e-3 cells covers the
+    float32 step and, at 0.05 m cells or coarser, most of that noise; where noise exceeds it, a wall
+    gets a one-cell jag, never a gap. The float32 step of the map's extent covers a map larger than
+    that. Either is micrometres to a hundredth of a cell, far below any offset a scene means.
     """
     return max(_EDGE_CELLS, 8 * _F32 * (abs(scale) + 1.0) / res)
 
