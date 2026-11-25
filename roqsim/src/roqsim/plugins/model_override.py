@@ -65,7 +65,7 @@ Config::
         - field: geom_friction         # must be on the allowlist (see `field_catalog`)
           select: [pad_left, pad_right]  # names in the field's namespace (geom/body/actuator/joint/flex)
           bodies: []                   # ...or every geom of these bodies' subtrees (geom fields only)
-          entity: ""                   # ...or an entity's body subtree (geom fields only)
+          entity: ""                   # ...or an entity's geoms, taken whole (geom fields only)
           to: 0.0                      # scalar (broadcast) or the field's full row
       active: false                    # initial state; false = nominal, i.e. the plugin is inert
       namespace: ""                    # transport scope; defaults to this instance's `name:`, so two
@@ -104,7 +104,7 @@ from .. import endpoint
 from ..contact_scope import side_name
 from ..context import SimContext
 from ..plugin import Plugin
-from ..presence import ABSENT_GEOM_GROUP, entity_geom_ids
+from ..presence import ABSENT_GEOM_GROUP, entity_geom_ids, entity_geoms
 from ..types import Duration
 from ._flex_material import refuse_damping_from_zero
 
@@ -535,7 +535,8 @@ class ModelOverridePlugin(Plugin):
                     f"{where}: entity {wanted!r} is not registered, or has no body "
                     f"(known: {', '.join(sorted(ctx.entities.names())) or 'none'})"
                 )
-            found = entity_geom_ids(model, entity.body)
+            # The whole entity: a walker's limbs are roots of their own (Entity.bodies).
+            found = entity_geoms(model, entity)
             if not found:
                 raise RuntimeError(
                     f"{where}: entity {wanted!r} (body {entity.body!r}) has no geoms"

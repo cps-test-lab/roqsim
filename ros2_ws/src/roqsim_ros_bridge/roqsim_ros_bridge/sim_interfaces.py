@@ -54,7 +54,7 @@ from roqsim import control as ctl
 from roqsim.kinematics import body_twist
 from roqsim.placement import PLACEABLE_MODES_HINT, carries_velocity, place_body
 from roqsim.plugin import Plugin
-from roqsim.presence import entity_geom_ids, set_present
+from roqsim.presence import entity_geoms, set_present
 from roqsim.schema import Field
 
 from .physics import DEFAULT_TIMEOUT_S, run_on_physics
@@ -362,8 +362,11 @@ def _sphere_of(bounds):
     return center, radius
 
 
-def _overlaps_sphere(model, data, body, center, radius) -> bool:
-    """Does any geom of entity body *body* (and its subtree) overlap the sphere? Physics thread.
+def _overlaps_sphere(model, data, entity, center, radius) -> bool:
+    """Does any geom of *entity* overlap the sphere? Physics thread.
+
+    Every geom of it: its ``body`` and each of its ``bodies``, with their subtrees, so a walker
+    whose arm reaches into the sphere is in it.
 
     Each geom is tested by its bounding sphere (``geom_rbound`` about ``geom_xpos``), so the test
     is conservative: it never misses a geom that overlaps, and may include one whose bounding
@@ -374,7 +377,7 @@ def _overlaps_sphere(model, data, body, center, radius) -> bool:
     import numpy as np
 
     c = np.asarray(center, dtype=float)
-    for gid in entity_geom_ids(model, body):
+    for gid in entity_geoms(model, entity, strict=False):
         offset = c - data.geom_xpos[gid]
         if int(model.geom_type[gid]) == mujoco.mjtGeom.mjGEOM_PLANE:
             normal = data.geom_xmat[gid].reshape(3, 3)[:, 2]
@@ -669,7 +672,7 @@ class SimInterfacesPlugin(Plugin):
             names = [name for name in names if regex.search(name)]
         if sphere is not None:
             center, radius = sphere
-            bodies = {name: getattr(self._ctx.entities.get(name), "body", None) for name in names}
+            entities = {name: self._ctx.entities.get(name) for name in names}
             # Recorded positively: run_on_physics also returns True for a command that raised.
             outcome = {}
 
@@ -677,8 +680,8 @@ class SimInterfacesPlugin(Plugin):
                 outcome["kept"] = [
                     name
                     for name in names
-                    if bodies[name]
-                    and _overlaps_sphere(ctx.model, ctx.data, bodies[name], center, radius)
+                    if getattr(entities[name], "body", None)
+                    and _overlaps_sphere(ctx.model, ctx.data, entities[name], center, radius)
                 ]
 
             if not run_on_physics(self._ctx, _overlapping) or "kept" not in outcome:

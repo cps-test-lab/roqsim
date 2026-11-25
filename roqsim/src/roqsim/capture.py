@@ -64,7 +64,7 @@ from .mcap_format import (
     RecordingNotFoundError as RecordingNotFoundError,  # re-exported: the errors a caller catches
 )
 from .mcap_format import RecordingTargetError as RecordingTargetError
-from .presence import subtree_body_ids
+from .presence import entity_bodies
 from .rates import (
     SNAP_NOTABLE,
     SNAP_QUIET,
@@ -375,7 +375,9 @@ def _local_name(name: str, entity: str, prefix: str) -> str:
 
 
 def _entities_of(model, registry) -> list[tuple[str, str, set[int]]]:
-    """Every registered entity with a body in this model: ``(name, prefix, body ids in its subtree)``.
+    """Every registered entity with a body in this model: ``(name, prefix, its body ids)``, the
+    body ids being all of it (:func:`roqsim.presence.entity_bodies`), a walker's limbs with its
+    pelvis.
 
     The prefix is the one its spawn plugin recorded in ``meta`` -- what turns ``robot/base_link`` in
     the compiled model back into ``base_link``, so a pattern is written in the words a world document
@@ -389,15 +391,12 @@ def _entities_of(model, registry) -> list[tuple[str, str, set[int]]]:
         return []
     out = []
     for entity in entities:
-        if not entity.body:
-            continue
-        root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, str(entity.body))
-        if root < 0:
+        # Not strict: the registry may hold an entity this model does not carry.
+        bodies = set(entity_bodies(model, entity, strict=False))
+        if not bodies:
             continue
         meta = entity.meta if isinstance(getattr(entity, "meta", None), dict) else {}
-        out.append(
-            (str(entity.name), str(meta.get("prefix") or ""), set(subtree_body_ids(model, root)))
-        )
+        out.append((str(entity.name), str(meta.get("prefix") or ""), bodies))
     return out
 
 

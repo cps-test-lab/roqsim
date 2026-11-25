@@ -30,10 +30,16 @@ _XML = """
     <body name="parent_b" pos="0 5 0">
       <body name="child_b" pos="0 0 0"><geom type="capsule" size="0.1 0.4" pos="3 0 0"/></body>
     </body>
+    <body name="pelvis_b" pos="0 -5 0"><geom type="sphere" size="0.1"/></body>
+    <body name="limb_b" pos="0 -5 0" mocap="true">
+      <geom type="capsule" size="0.1 0.4" pos="3 0 0"/>
+    </body>
   </worldbody>
 </mujoco>
 """
 _ENTITIES = {"near": "near_b", "far": "far_b", "arm": "parent_b", "marker": None}
+#: An entity that owns a root body beside its ``body``, as a walker owns its limbs.
+_BODIES = {"walker": ("limb_b",)}
 
 
 def _plugin(names=("near", "far", "arm", "marker")):
@@ -42,7 +48,9 @@ def _plugin(names=("near", "far", "arm", "marker")):
     mujoco.mj_forward(model, data)
     entities = SimpleNamespace(
         names=lambda present_only=False, listed_only=False: list(names),
-        get=lambda name: SimpleNamespace(body=_ENTITIES[name]),
+        get=lambda name: SimpleNamespace(
+            body=_ENTITIES.get(name, "pelvis_b"), bodies=_BODIES.get(name, ())
+        ),
     )
     plugin = SimInterfacesPlugin()
     plugin._ctx = SimpleNamespace(entities=entities, model=model, data=data)
@@ -118,6 +126,12 @@ def test_a_sphere_keeps_entities_whose_geometry_overlaps_it():
 def test_a_sphere_sees_a_geom_on_a_child_body():
     resp = _get(EntityFilters(bounds=_sphere((3.0, 5.0, 0.0), 0.05)))
     assert list(resp.entities) == ["arm"]
+
+
+def test_a_sphere_sees_a_geom_on_a_root_body_the_entity_owns_beside_its_body():
+    # Only the walker's limb, a root body of the world beside its pelvis, reaches (3, -5, 0).
+    resp = _get(EntityFilters(bounds=_sphere((3.0, -5.0, 0.0), 0.05)), ["near", "walker"])
+    assert list(resp.entities) == ["walker"]
 
 
 def test_a_sphere_touching_nothing_keeps_nothing():

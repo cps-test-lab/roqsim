@@ -512,3 +512,34 @@ def test_a_named_entity_that_starts_absent_is_measured_once_it_appears(world):
         assert report.geom == "post_geom" and not report.saturated
     finally:
         engine.shutdown()
+
+
+_TWO_PART_POST = """
+<mujoco>
+  <worldbody>
+    <geom name="floor" type="plane" size="10 10 .1"/>
+    <body name="post" pos="2 0 .5">
+      <geom name="post_front" type="box" pos="-.5 0 0" size=".1 .5 .5"/>
+      <geom name="post_back" type="box" size=".1 .5 .5"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_an_ignored_geom_of_a_named_entity_never_counts(world, tmp_path):
+    # `ignore` holds with `entities` as without: the named entity's front part is nearer, and
+    # ignored, so the distance is to its back part.
+    (tmp_path / "s.xml").write_text(_TWO_PART_POST)
+    world["components"][0]["components"] = [
+        {"clearance_monitor": {"entities": ["post"], "ignore": ["floor", "post_front"]}}
+    ]
+    engine = _engine(world)
+    try:
+        engine.ctx.entities.add(Entity(name="post", kind="object", body="post"))
+        _drive_to(engine, 0.0)
+        report = _report(engine)
+        assert report.geom == "post_back"
+        assert report.current == pytest.approx(2.0 - 0.1 - 0.2, abs=0.01)
+    finally:
+        engine.shutdown()

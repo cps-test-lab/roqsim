@@ -566,7 +566,10 @@ just fit better.
 ``stop`` is the forward probe. The planner's grid holds static walls and nothing else, so a mover
 also looks ahead along the corridor it is about to occupy, and what it sees is exactly the complement
 of the grid: a body with degrees of freedom, or a mocap body -- precisely what ``wall_polygons``
-refuses to rasterize. A wall at a corner is the planner's business and never the probe's. Holding is
+refuses to rasterize. A wall at a corner is the planner's business and never the probe's. The
+probe never sees its own mover, and ``ignore: [...]`` names entities it never stops for; both take
+an entity whole, so a walker's own limbs are not in its way and ``ignore: [walker_1]`` passes a
+walker's legs as well as its pelvis. Holding is
 the default response, because a stopped mover is still on its path and resumes on the leg it was on,
 while a re-routing one has quietly changed a trajectory the experiment may have been holding fixed.
 
@@ -633,8 +636,10 @@ Navigation: detecting a collision
 ---------------------------------
 
 A navigation trial usually fails by touching something, and ``contact_monitor`` is the observable
-for that. It watches an entity's whole kinematic subtree (chassis *and* wheels) and reports any
-contact against a geom outside its ``ignore`` list::
+for that. It watches the whole entity it is nested under -- its root body's subtree (chassis *and*
+wheels) and every other root the entity owns (``Entity.bodies``: a walker's limbs, which are bodies
+of the world rather than children of its pelvis) -- and reports any contact against a geom outside
+its ``ignore`` list::
 
    - spawn_robot: {model: turtlebot4}
      name: robot
@@ -654,7 +659,7 @@ Three things are worth knowing before reaching for a proximity check instead:
 * **A flex is a side like a geom.** A MuJoCo ``<flexcomp>`` touches things through its vertices and
   elements, not through geoms, and MuJoCo reports its side of a contact with geom id ``-1``. The
   watched set holds the flexes the entity owns -- those whose vertex (or node) bodies all lie in its
-  subtree, such as a soft pad in an arm's end effector -- so an entity that is only a flex is
+  bodies, such as a soft pad in an arm's end effector -- so an entity that is only a flex is
   watchable, ``ignore`` may name a flex, and the report names a flex side ``flex:<name>[v<i>]`` (or
   ``[e<i>]`` for an element). The ``-1`` is never looked up as a geom, which would have made every
   flex contact a collision of the model's last geom.
@@ -802,7 +807,9 @@ report one separation per kind of obstacle, give each its own monitor with ``ent
 named entities' geoms count, a walker's limbs with its pelvis. ``hit_geometry: true`` adds their
 collision-group geoms that do not collide, which for a walker are its arms. A named entity
 counts while it is present, so one the world starts absent is measured from the moment it
-appears; an absent walker's limbs stay in the world and are still measured::
+appears, and an absent walker is absent limbs and all. The monitor's own side is the whole entity
+it is nested under as well, so one under a walker watches its limbs beside its pelvis; ``body``
+narrows it to one body and that body's subtree::
 
    - clearance_monitor: {entities: [pedestrian_1, pedestrian_2], hit_geometry: true}
      name: clearance_humans
@@ -876,7 +883,7 @@ Four things about it:
   samples it would decimate are the integral.
 * **It counts exactly what ``contact_monitor`` counts.** One geometry rule, not two, and one
   implementation of it: both plugins resolve the same ``roqsim.contact_scope.ContactScope`` --
-  every contact with exactly one side in the watched subtree (a geom, or a flex the entity owns) and
+  every contact with exactly one side in the watched entity (a geom, or a flex the entity owns) and
   neither side in ``ignore`` / ``ignore_prefixes`` -- so they cannot disagree about which contacts
   they describe. ``contact_location`` and ``bumper`` resolve it too. Their
   ``ignore`` lists should agree for the same reason clearance's should.
@@ -1011,6 +1018,9 @@ and, for a wheel that keeps its grip only until it does not::
    - model_override:
        overrides: [{field: geom_friction, select: [wheel_left_tyre, wheel_right_tyre], to: 0.02}]
      name: traction_fault
+
+A geom field's objects may also be named as ``bodies: [...]`` (every geom of each body's subtree)
+or ``entity: <name>``, every geom of that entity taken whole -- a walker's limbs with its pelvis.
 
 The plugin is inert until fired, so adding it changes nothing about a nominal run.
 
@@ -1443,8 +1453,10 @@ reports which PIXELS an object covers -- what an IoU, a mask AP or a training se
 That publishes a ``mono8`` class image, a ``16UC1`` instance image and a
 ``vision_msgs/Detection2DArray`` of tight boxes, all off one render through the named MJCF camera.
 
-**Three selectors, because a label does not always follow a body.** ``bodies`` and ``entities``
-label everything a body or a whole kinematic subtree carries -- what a parcel or a pedestrian is.
+**Three selectors, because a label does not always follow a body.** ``bodies`` labels everything a
+body carries, and ``entities`` everything an entity is -- each of its root bodies with its subtree,
+so a walker's limbs are labelled with its pelvis, as one instance -- what a parcel or a pedestrian
+is.
 ``geoms`` labels named geoms directly, which is what the *parts* of a procedural prop are: a
 ``shelf`` compiles to one body carrying its boards and its legs as separate geoms, and a
 ``workbench`` its top and its frame, so a body-granular vocabulary can only call the whole thing

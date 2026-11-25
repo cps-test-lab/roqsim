@@ -64,6 +64,7 @@ from .config import _VIEW_KEYS, PluginError, assignments_from_mapping, overrides
 from .exit_status import NO_GL
 from .models import ModelError
 from .override_options import add_override_options, add_renderer_option, overrides_from_options
+from .presence import entity_root_ids
 from .recording import RecordingError
 from .rendering import (
     DEFAULT_RENDERER,
@@ -348,13 +349,21 @@ def reset_to_home(model: mujoco.MjModel, data: mujoco.MjData) -> None:
 
 
 def _entity_bodies(model: mujoco.MjModel, ctx, names: list[str]) -> list[int]:
-    """Body ids for ``--focus`` names, resolved as an entity first and then as a plain body name."""
+    """Body ids for ``--focus`` names, resolved as an entity first and then as a plain body name.
+
+    An entity gives each of its root bodies (:func:`roqsim.presence.entity_root_ids`), so a walker
+    is framed limbs and all."""
     ids: list[int] = []
     missing: list[str] = []
     for name in names:
         entity = ctx.entities.get(name) if ctx is not None else None
-        body = getattr(entity, "body", None) or name
-        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body)
+        if entity is not None and entity.body:
+            try:
+                ids.extend(entity_root_ids(model, entity))
+            except RuntimeError:  # it names a body this model lacks
+                missing.append(name)
+            continue
+        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
         if bid < 0:
             missing.append(name)
         else:

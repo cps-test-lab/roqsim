@@ -34,7 +34,7 @@ different signal depending on who was listening.
 
 **It counts exactly what ``contact_monitor`` counts.** Not a second rule that agrees by inspection:
 both plugins resolve the same :class:`roqsim.contact_scope.ContactScope` and ask it which of a
-step's contacts qualify -- exactly one side in the watched entity's kinematic subtree, neither side
+step's contacts qualify -- exactly one side in the watched entity, neither side
 in ``ignore`` / ``ignore_prefixes``. Two observables over one geometry then cannot disagree about
 which contacts they are describing -- one says whether it happened, the other how hard. The one rule they do not share is ``contact_monitor``'s ``min_force``, and this plugin has no
 equivalent **on purpose**: a force threshold chosen to reject numerical grazing is exactly the
@@ -54,7 +54,7 @@ Config::
     contact_impulse:
       # The entity watched is the one this entry is NESTED UNDER -- there is no key for it, and
       # declaring it at the top of a document is refused (`requires_owner`).
-      body: ""               # a body of the entity, as a path within it; default: its root
+      body: ""               # a body of the entity, as a path within it; default: the whole entity
       namespace: ""          # transport scope for the endpoint
       ignore: [floor]        # geom or flex NAMES that never count (default: ['floor'])
       ignore_prefixes: []    # geom or flex name prefixes that never count (e.g. ['ground'])

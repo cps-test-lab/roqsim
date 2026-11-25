@@ -36,7 +36,13 @@ from . import raycast
 from .conditions import of_model as conditions_of_model
 from .exit_status import NO_GL
 from .plugin import PluginError
-from .presence import ABSENT_GEOM_GROUP, PARKED_BELOW_Z, WINDOW_GEOM_GROUP, subtree_body_ids
+from .presence import (
+    ABSENT_GEOM_GROUP,
+    PARKED_BELOW_Z,
+    WINDOW_GEOM_GROUP,
+    entity_root_ids,
+    subtree_body_ids,
+)
 from .render_api import (
     BODIES,
     CAMERA_MODELS,
@@ -253,17 +259,13 @@ def preview_camera(
     """The camera for showing ``entities`` (a prop or robot) by themselves -- the one call the windowed
     viewers make for a single-model preview.
 
-    Brings forward kinematics current, resolves each entity's body, and :func:`autoframe`\\ s on them.
+    Brings forward kinematics current, resolves each entity's root bodies -- its ``body`` and each
+    of its ``bodies``, so a walker is framed limbs and all -- and :func:`autoframe`\\ s on them.
     ``entities`` is any iterable of objects with a ``body`` name (e.g. ``ctx.entities.all()``); those
-    with no body or an unresolved name are skipped.
+    with no body, and names that resolve to no body, are skipped.
     """
     mujoco.mj_forward(model, data)  # geom world poses must be current before measuring
-    ids = []
-    for e in entities:
-        name = getattr(e, "body", None)
-        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name) if name else -1
-        if bid >= 0:
-            ids.append(bid)
+    ids = [bid for e in entities for bid in entity_root_ids(model, e, strict=False)]
     return autoframe(model, data, ids, aspect=aspect)
 
 

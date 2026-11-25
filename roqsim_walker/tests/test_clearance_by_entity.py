@@ -94,6 +94,7 @@ def test_a_walker_entity_owns_every_limb(tmp_path):
         bodies = {model.body(int(model.geom_bodyid[g])).name for g in geoms}
         assert "pedestrian/pelvis" in bodies
         assert {"pedestrian/shoulder_l", "pedestrian/elbow_r"} <= bodies
+        assert {"pedestrian/knee_l", "pedestrian/ankle_r", "pedestrian/toe_l"} <= bodies
     finally:
         engine.shutdown()
 

@@ -28,12 +28,13 @@ would need. This plugin is the mapping from that to an experiment's own vocabula
 which bodies are a ``parcel``, and gets a class image, an instance image, and tight 2D boxes measured
 **from the mask** rather than projected from a bounding volume.
 
-**Three selectors, because a label does not always follow a body.** ``bodies`` and ``entities``
-label everything a body (or a whole kinematic subtree) carries, which is what a parcel or a
-pedestrian is. ``geoms`` labels named geoms directly, which is what the PARTS of one prop are: a
-procedural shelf is a single body carrying its boards and its legs as separate geoms, and a
-workbench its top and its frame, so a body-granular vocabulary can only ever call the whole thing
-one class. An experiment that measures whether a mapper separates a surface from its support needs
+**Three selectors, because a label does not always follow a body.** ``bodies`` labels everything a
+body carries, and ``entities`` everything an entity is: its root and each of its ``bodies``, with
+their subtrees, which is what a parcel or a pedestrian is (a walker's limbs are bodies of the world,
+not children of its pelvis, and are labelled with it as one instance). ``geoms`` labels named geoms
+directly, which is what the PARTS of one prop are: a procedural shelf is a single body carrying its
+boards and its legs as separate geoms, and a workbench its top and its frame, so a body-granular
+vocabulary can only ever call the whole thing one class. An experiment that measures whether a mapper separates a surface from its support needs
 the parts named apart.
 
 **Finding the names.** A prop's parts are geoms, and
@@ -61,7 +62,7 @@ Config (in addition to ``camera_common.CameraPlugin``'s)::
       camera: camera            # the MJCF <camera> to render through
       classes:                  # REQUIRED: the experiment's vocabulary, in priority order
         - {class_id: 1, name: parcel, bodies: ["graspable_*"]}
-        - {class_id: 2, name: person, entities: [walker_1]}   # whole kinematic subtree
+        - {class_id: 2, name: person, entities: [walker_1]}   # the whole entity, limbs and all
         - {class_id: 3, name: shelf_board, geoms: ["board_*"]}   # PARTS of one body
       instances: false          # also publish the instance-id image (16UC1)
       detections: true          # publish 2D boxes derived from the mask
@@ -116,7 +117,7 @@ import numpy as np
 from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.endpoint import Unit
-from roqsim.presence import ABSENT_GEOM_GROUP, WINDOW_GEOM_GROUP, subtree_body_ids
+from roqsim.presence import ABSENT_GEOM_GROUP, WINDOW_GEOM_GROUP, entity_bodies, entity_root_ids
 from roqsim.types import Image
 
 from .camera_common import CameraPlugin, join_topic
@@ -299,12 +300,15 @@ class SegmentationCameraPlugin(CameraPlugin):
     def _build_lookups(self, ctx: SimContext, prefix: str) -> None:
         """geom -> (class, instance), resolved once against the compiled model.
 
-        Bodies are matched by name or glob, and an entity contributes its whole kinematic subtree --
-        a robot means its chassis and its wheels, exactly as ``contact_monitor`` reads a robot. The
-        instance is the *matched* body, not the geom's own: a robot is one object, so its wheel
-        pixels carry the base's id rather than making every link an object of its own.
+        Bodies are matched by name or glob, and an entity contributes every body it owns
+        (:func:`roqsim.presence.entity_bodies`) -- a robot means its chassis and its wheels, a
+        walker its pelvis and its limbs, exactly as ``contact_monitor`` reads either. The instance
+        is the *matched* body, not the geom's own: a robot is one object, so its wheel pixels carry
+        the base's id rather than making every link an object of its own, and a walker's limb
+        pixels carry its pelvis's.
         """
         m = ctx.model
+        self._joined: dict[int, int] = {}
         self._class_of_geom = np.zeros(m.ngeom, dtype=np.uint8)
         self._instance_of_geom = np.zeros(m.ngeom, dtype=np.uint16)
         body_names = [
@@ -334,7 +338,7 @@ class SegmentationCameraPlugin(CameraPlugin):
                     )
                 matched.extend(hits)
             for name in entry.get("entities") or []:
-                matched.extend(self._entity_subtree(ctx, m, name, class_id))
+                matched.extend(self._entity_bodies(ctx, m, name, class_id))
 
             # Geoms are labelled directly rather than through a body, because the parts of a
             # procedural prop share one: a shelf is a single body carrying its boards and its
@@ -359,7 +363,9 @@ class SegmentationCameraPlugin(CameraPlugin):
                 for geom in hits:
                     if self._class_of_geom[geom] != BACKGROUND:
                         continue
-                    instance = self._instance_root(m, int(m.geom_bodyid[geom]), matched)
+                    instance = self._instance_root(
+                        m, int(m.geom_bodyid[geom]), matched, self._joined
+                    )
                     if instance > MAX_INSTANCE_ID:
                         raise RuntimeError(
                             f"segmentation_camera[{self.label}]: body id {instance} exceeds the "
@@ -369,7 +375,7 @@ class SegmentationCameraPlugin(CameraPlugin):
                     self._instance_of_geom[geom] = instance
 
             for body in matched:
-                instance = self._instance_root(m, body, matched)
+                instance = self._instance_root(m, body, matched, self._joined)
                 if instance > MAX_INSTANCE_ID:
                     raise RuntimeError(
                         f"segmentation_camera[{self.label}]: body id {instance} exceeds the "
@@ -392,7 +398,9 @@ class SegmentationCameraPlugin(CameraPlugin):
                 self._class_of_geom[visual] = self._class_of_geom[source]
                 self._instance_of_geom[visual] = self._instance_of_geom[source]
 
-    def _entity_subtree(self, ctx: SimContext, m, name: str, class_id: int) -> list[int]:
+    def _entity_bodies(self, ctx: SimContext, m, name: str, class_id: int) -> list[int]:
+        """Every body of entity *name*. Each of its extra roots is joined to its root body in
+        ``_joined``, so the whole entity is one instance."""
         entity = ctx.entities.get(name)
         if entity is None or not entity.body:
             raise RuntimeError(
@@ -406,22 +414,28 @@ class SegmentationCameraPlugin(CameraPlugin):
                 f"segmentation_camera[{self.label}]: entity {name!r} base body "
                 f"{entity.body!r} not found"
             )
-        return subtree_body_ids(m, root)
+        for extra in entity_root_ids(m, entity)[1:]:
+            self._joined[extra] = root
+        return entity_bodies(m, entity)
 
     @staticmethod
-    def _instance_root(m, body: int, matched: list[int]) -> int:
+    def _instance_root(m, body: int, matched: list[int], joined: dict[int, int]) -> int:
         """The highest ancestor of *body* this class also matched -- the object it is part of.
 
         A subtree match brings in every link, and a link is not an object: walking up to the topmost
         matched ancestor makes a robot one instance whether the class named the entity or globbed
-        its links.
+        its links. An entity's extra root (*joined*, its ``bodies``) continues the walk at the
+        entity's root body, so a walker's limbs are one instance with its pelvis.
         """
         root = body
-        parent = int(m.body_parentid[body])
-        while parent != 0 and parent != root and parent in matched:
-            root = parent
+        while True:
             parent = int(m.body_parentid[root])
-        return root
+            if parent != 0 and parent != root and parent in matched:
+                root = parent
+            elif joined.get(root, root) != root and joined[root] in matched:
+                root = joined[root]
+            else:
+                return root
 
     # -- capture ------------------------------------------------------------------------------
 

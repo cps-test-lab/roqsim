@@ -20,7 +20,7 @@ Config::
     contact_monitor:
       # The entity watched is the one this entry is NESTED UNDER -- there is no key for it, and
       # declaring it at the top of a document is refused (`requires_owner`).
-      body: ""               # a body of the entity, as a path within it; default: its root
+      body: ""               # a body of the entity, as a path within it; default: the whole entity
       namespace: ""          # transport scope for the endpoint
       ignore: [floor]        # geom or flex NAMES that never count as a collision (default: ['floor'])
       ignore_prefixes: []    # geom or flex name prefixes that never count (e.g. ['ground'])
@@ -38,9 +38,10 @@ flex as ``flex:<name>[v<i>]`` with the vertex that touched. ROS carries ``in_con
 entity's namespace: two namespaced robots get ``/a/collision`` and ``/b/collision``); a bridge that
 wants the detail reads the fields directly.
 
-The watched set is the entity's **kinematic subtree**: for a mobile base that is the chassis plus its
-wheels, so a wheel clipping a box counts exactly as much as the bumper does -- and a flex whose
-vertices all hang in that subtree, such as a soft pad on an arm's end effector.
+The watched set is the **whole entity**: its body and every body it owns, each with its subtree. For
+a mobile base that is the chassis plus its wheels, so a wheel clipping a box counts exactly as much
+as the bumper does -- and a flex whose vertices all hang in that set, such as a soft pad on an arm's
+end effector.
 
 **When the trial spawns the watched entity.** ``reset_on_spawn`` (default true) restarts the
 report when the watched entity GAINS PRESENCE. An entity that has just been spawned has no

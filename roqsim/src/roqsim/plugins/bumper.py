@@ -38,12 +38,12 @@ Config::
     bumper:
       # The entity watched is the one this entry is NESTED UNDER -- there is no key for it, and
       # declaring it at the top of a document is refused (`requires_owner`).
-      body: ""               # a body of the entity, as a path within it; default: its root
+      body: ""               # a body of the entity, as a path within it; default: the whole entity
       namespace: ""          # transport scope for the endpoints
       zones:                 # bearing sectors, radians in the base frame, counter-clockwise from
         front: [-0.52, 0.52] #   +x: {<zone>: [from, to]}. A sector with from > to wraps through
         left: [0.52, 1.57]   #   +/-pi, so a rear zone is `[2.6, -2.6]`.
-      geoms: []              # geom NAMES that ARE the bumper (default: the entity's whole subtree,
+      geoms: []              # geom NAMES that ARE the bumper (default: the whole entity,
                              #   like contact_monitor, its flexes included). A real bumper is one
                              #   shell; a contact on the chassis roof presses no switch, so a model
                              #   that names its shell geoms lists them here.
@@ -200,7 +200,7 @@ class BumperPlugin(Plugin):
                     raise RuntimeError(f"bumper: geom {prefix + name!r} not found")
                 if not scope.watched[gid]:
                     raise RuntimeError(
-                        f"bumper: geom {prefix + name!r} is not part of {scope.body!r}'s subtree"
+                        f"bumper: geom {prefix + name!r} is not part of the watched entity"
                     )
             shell = np.zeros(model.ngeom, dtype=bool)
             for gid in np.flatnonzero(scope.watched):

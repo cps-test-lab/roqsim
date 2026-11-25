@@ -24,10 +24,11 @@ to disagree about *which* contacts they are describing. So the rule is resolved 
 plugin asks this object, rather than each carrying its own copy of a predicate that is only equal
 by inspection.
 
-The subtree walk itself is :func:`roqsim.presence.entity_geom_ids`, which is what decides the
-extent of an entity everywhere else in the substrate; what this module adds is the ignore list, the
-per-step filter, and failing loudly where a mistyped body would otherwise leave a meter watching
-nothing and reporting a clean run forever.
+The extent of an entity is :func:`roqsim.presence.entity_geoms`, which decides it everywhere else
+in the substrate: its root body and each of its ``bodies``, with their subtrees, so a multi-body
+entity such as a walker, whose limbs are bodies of the world, is watched whole. What this module
+adds is the ignore list, the per-step filter, and failing loudly where a mistyped body would
+otherwise leave a meter watching nothing and reporting a clean run forever.
 
 **A contact side is a geom or a flex.** A contact involving a MuJoCo flex carries ``geom = -1`` on
 the flex's side and the flex's id in ``contact.flex`` (the vertex in ``contact.vert``, or the
@@ -35,7 +36,7 @@ element in ``contact.elem``). Indexing a per-geom mask with that ``-1`` reads th
 geom, so a flex touching anything would be attributed to whatever geom happened to be compiled
 last. The scope therefore carries a mask per flex beside the mask per geom, and reads each side
 from the one that side is: its geom where ``geom >= 0``, else its flex. The flexes an entity owns
-are :func:`roqsim.flex.entity_flex_ids` -- those whose DOF bodies all lie in its subtree -- so an
+are :func:`roqsim.flex.entity_flexes` -- those whose DOF bodies all lie in its bodies -- so an
 entity that is only a flex is watchable, and ``ignore`` may name a flex as well as a geom.
 :func:`side_name` names a side for a report, a flex side as ``flex:<name>[v<i>]``.
 
@@ -53,9 +54,9 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from .flex import entity_flex_ids
+from .flex import entity_flex_ids, entity_flexes
 from .frames import entity_body
-from .presence import entity_geom_ids
+from .presence import entity_geom_ids, entity_geoms
 
 _log = logging.getLogger(__name__)
 
@@ -159,10 +160,12 @@ def resolve_contact_scope(
 ) -> ContactScope:
     """Resolve the watched subtree and the ignore list into masks, or fail loudly.
 
-    The watched body is *entity*'s registered root, or the body *body* names as a path within it
-    (:func:`roqsim.frames.entity_body`). *plugin* names the caller in the errors and the log line,
-    since what a missing body means is the caller's story. The watched set is the subtree's geoms
-    and the flexes it owns (:func:`roqsim.flex.entity_flex_ids`); *ignore* and *ignore_prefixes*
+    Without *body* the watched set is the whole of *entity*: its registered root and each of its
+    ``bodies`` (:func:`roqsim.presence.entity_geoms`, :func:`roqsim.flex.entity_flexes`), so a
+    walker is watched limbs and all. With one, it is the subtree of the body *body* names as a path
+    within the entity (:func:`roqsim.frames.entity_body`) and the flexes that subtree owns
+    (:func:`roqsim.flex.entity_flex_ids`). *plugin* names the caller in the errors and the log line,
+    since what a missing body means is the caller's story. *ignore* and *ignore_prefixes*
     match geom and flex names alike. Raises :class:`RuntimeError` where the body does not resolve
     or its subtree carries neither a geom nor a flex: a meter watching nothing reports a clean run
     forever, which is indistinguishable from a trial that touched nothing and would be averaged in
@@ -172,10 +175,15 @@ def resolve_contact_scope(
     model = ctx.model
     body_name = model.body(entity_body(ctx, entity, body, who=plugin).index).name
 
+    if body.strip() not in ("", "."):
+        geoms, flexes = entity_geom_ids(model, body_name), entity_flex_ids(model, body_name)
+    else:
+        whole = ctx.entities.get(entity)
+        geoms, flexes = entity_geoms(model, whole), entity_flexes(model, whole)
     watched = np.zeros(model.ngeom, dtype=bool)
-    watched[entity_geom_ids(model, body_name)] = True
+    watched[geoms] = True
     watched_flex = np.zeros(model.nflex, dtype=bool)
-    watched_flex[entity_flex_ids(model, body_name)] = True
+    watched_flex[flexes] = True
     if not watched.any() and not watched_flex.any():
         raise RuntimeError(
             f"{plugin}: body {body_name!r} and its subtree carry no geoms or flexes to watch"

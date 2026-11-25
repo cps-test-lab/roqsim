@@ -272,7 +272,22 @@ def entity_flex_ids(model: mujoco.MjModel, body_name: str) -> list[int]:
     # Imported here so that presence, which hides an entity's flexes, may import this module.
     from .presence import entity_body_ids
 
-    bodies = set(entity_body_ids(model, body_name))
+    return _flexes_within(model, set(entity_body_ids(model, body_name)), repr(body_name))
+
+
+def entity_flexes(model: mujoco.MjModel, entity) -> list[int]:
+    """Every flex of *entity*: those whose DOF bodies all lie among its bodies
+    (:func:`roqsim.presence.entity_bodies`, which takes a multi-body entity such as a walker whole).
+
+    The rule is :func:`entity_flex_ids`', over every root the entity owns rather than one subtree.
+    """
+    from .presence import entity_bodies
+
+    return _flexes_within(model, set(entity_bodies(model, entity)), repr(entity.name))
+
+
+def _flexes_within(model: mujoco.MjModel, bodies: set[int], label: str) -> list[int]:
+    """The flexes whose DOF bodies all lie in *bodies*; one lying partly in them is logged."""
     if not bodies:
         return []
     flexes = []
@@ -285,10 +300,10 @@ def entity_flex_ids(model: mujoco.MjModel, body_name: str) -> list[int]:
             flexes.append(flex)
         else:
             _log.warning(
-                "flex %r sits partly in %r's subtree (%d of its %d bodies) and is not counted as "
+                "flex %r sits partly in %s's subtree (%d of its %d bodies) and is not counted as "
                 "part of it: presence and anything else that works per entity leave it alone",
                 flex_label(model, flex),
-                body_name,
+                label,
                 len(inside),
                 len(on),
             )

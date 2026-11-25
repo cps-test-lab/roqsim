@@ -44,7 +44,7 @@ difference is that the threshold is then the experiment's, stated in the experim
 Config::
 
     clearance_monitor:
-      body: ""               # a body of the entity, as a path within it; default: its root
+      body: ""               # a body of the entity, as a path within it; default: the whole entity
       ignore: [floor]        # geom NAMES that never count (default: ['floor'])
       ignore_prefixes: []    # geom name prefixes that never count
       entities: null         # entity names: measure to their geoms alone (default: every geom)
@@ -96,8 +96,11 @@ not collide: a walker's arms, which rays see and contacts ignore so that a swing
 shove a robot, are still part of how close it came. Entities register while the world configures,
 so the names are resolved at the first measurement, and a name no entity has fails it there. A
 named entity counts while it is present: one the world starts absent is measured from the moment
-it appears. Presence hides an entity's ``body`` subtree only, so an absent walker's limbs, which
-still block and are still seen, are still measured.
+it appears.
+
+**From what.** Without ``body`` the watched side is the whole entity the monitor is nested under:
+its root and each of its ``bodies``, with their subtrees, so a monitor under a walker watches its
+limbs as well as its pelvis. ``body`` narrows it to one body of the entity and that body's subtree.
 
 ``distmax`` is the other performance knob and it is a real one: the cost is a distance query
 per (watched geom, candidate geom) pair, and the cutoff lets MuJoCo reject far pairs
@@ -143,7 +146,8 @@ class ClearanceReport:
 
 
 class ClearanceMonitorPlugin(Plugin):
-    """Minimum distance from a watched subtree to everything it is not allowed to hit."""
+    """Minimum distance from a watched entity (or one body's subtree) to everything it is not
+    allowed to hit."""
 
     parallel_safe = True  # post_step reads geometry and writes only its own state
     requires_owner = True  # it watches an entity, so it must be nested under one
@@ -208,7 +212,11 @@ class ClearanceMonitorPlugin(Plugin):
         body_name = model.body(root).name
         self._body_name = body_name
 
-        subtree = subtree_geom_ids(model, root)
+        if self.body.strip() in ("", "."):
+            # The whole entity: a walker's limbs are roots of their own (Entity.bodies).
+            subtree = entity_geoms(model, ctx.entities.get(self.robot))
+        else:
+            subtree = subtree_geom_ids(model, root)
         # Only geoms that can actually collide. `mj_geomDistance` is pure geometry and
         # ignores collision masks, so without this a render-only geom would be reported as
         # clearance to something the robot passes straight through -- and articulated
@@ -343,8 +351,8 @@ class ClearanceMonitorPlugin(Plugin):
     def _counts(self, model, watched: int, candidate: int) -> bool:
         """Whether this pair is clearance now: MuJoCo could put it in contact, or the candidate
         is hit geometry a monitor with ``hit_geometry`` counts. Asked at every measurement, not
-        once: presence (roqsim.presence) zeroes the contact flags of an absent entity's ``body``
-        subtree and moves its geoms out of their group at run time, and restores both when it
+        once: presence (roqsim.presence) zeroes the contact flags of every geom of an absent
+        entity and moves them out of their group at run time, and restores both when it
         appears. A named entity's pairs are all kept, so it counts from the moment it is
         present, whichever it was when the run began; without ``entities`` the pairs are those
         that could touch when the monitor configured, and one of them stops counting while its
