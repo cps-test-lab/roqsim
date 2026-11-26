@@ -1097,6 +1097,8 @@ def test_steered_it_looks_only_lookahead_ahead(tmp_path):
 def test_steered_it_stands_stop_gap_short_of_a_mover_crossing_not_wait_gap(tmp_path):
     engine, probe = _probe_with(tmp_path, (0.25 + 0.2 + 0.6, 0.0))  # 0.6 m ahead of the front
     try:
+        # 0.6 m ahead, crossing from its left at 0.3 m/s: it reaches the cart's line first
+        cart = _xy(engine)
         things = [
             {
                 "dist": 0.6,
@@ -1105,11 +1107,13 @@ def test_steered_it_stands_stop_gap_short_of_a_mover_crossing_not_wait_gap(tmp_p
                 "lat_lo": -0.2,
                 "lat_hi": 0.2,
                 "points": [],
+                "xy": cart + (1.05, 0.3),
+                "v": np.array([0.0, -0.3]),
             }
         ]
-        _, _, held = probe._grade(things, 0.8)
+        _, _, held = probe._grade(things, 0.8, origin=cart, heading=0.0)
         assert held, "it does not wait for a mover crossing 0.6 m ahead"
-        _, _, held = probe._grade(things, 0.8, steering=True)
+        _, _, held = probe._grade(things, 0.8, steering=True, origin=cart, heading=0.0)
         assert not held, "steered, it waits wait_gap short of a mover crossing"
     finally:
         engine.shutdown()

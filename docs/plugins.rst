@@ -622,8 +622,10 @@ mover slows on that stop's curve from as far out as it needs, to stand ``stop_ga
 stands or comes the other way and ``wait_gap`` short of a mover crossing ahead. Something that
 appears inside that stopping distance, or a crosser that stops being passable, drops the speed to
 what the gap then allows within a tick. A mover crossing that will have left the corridor before it
-gets there is passed without slowing; one moving along the way is followed, at its speed and that of
-a stop in the gap left, and never stood for. Once the way has cleared and ``clear_time`` has passed,
+gets there is passed without slowing, and so is one that will reach the point where their ways cross
+after it does: of two crossing, the one that gets there first goes first, and within 0.1 s of each
+other, the one coming from the other's right. One moving along the way is followed, at its speed and
+that of a stop in the gap left, and never stood for. Once the way has cleared and ``clear_time`` has passed,
 the speed rises to the set speed with the time constant ``tau``.
 
 .. code-block:: yaml
@@ -645,6 +647,29 @@ way.
 
 The ``walker`` output declares the values above too, so a walker with ``stop: true`` meets what is in
 its way at a person's pace without its world writing any of them.
+
+**Stepping aside on its route** is ``sidestep``, for a mover that does not steer (``steer: none``,
+``stop: true``). What stands in its route -- standing, coming the other way, or going its way slower
+than it, or what it would pass closer than ``clearance`` -- has it take, every 0.1 s, the heading
+with the freest way: of the headings within 90 degrees of its route's, every 15 degrees, each looked
+along with ``clearance`` more each side, the one that brings it nearest a point ``back`` metres on
+along its route. It never goes further than ``max`` from its route, steps aside as soon as what is
+in its way is ``onset`` away at its own pace (sooner for what comes the other way), and walks back
+to its route once past. Someone coming the other way it passes on the side away from them, and on
+its right when they are on its line, so two meeting head-on step to opposite sides; once it has
+chosen a side it keeps to it, and takes the other only where nothing on its own is free. A mover
+crossing its route is waited for, as above. Leaving and rejoining the route are events
+(``sidestep``, ``sidestep_back``), with the offset. The ``walker`` output declares
+``{max: 1.0, onset: 2.2, back: 4.85, clearance: 0.24}`` (m), and ``sidestep: false`` keeps a walker
+on its route, standing before what is in it; a mover whose output declares none keeps to its route
+and stands.
+
+.. code-block:: yaml
+
+   avoidance:
+     steer: none
+     stop: true
+     sidestep: {max: 1.0, onset: 2.2, back: 4.85, clearance: 0.24}
 
 ``reroute`` is the opt-in that changes that: it remembers where it was stopped as a disc that
 expires, and plans around it. The memory is what makes it work -- the grid is static, so a mover that

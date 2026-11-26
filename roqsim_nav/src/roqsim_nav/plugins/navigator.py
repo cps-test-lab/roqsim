@@ -72,6 +72,7 @@ Movers that agree on it share one rasterized grid (see :mod:`roqsim_nav.grid`).
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import mujoco
@@ -88,7 +89,7 @@ from .._resolve import RegistryError
 from ..avoidance import NO_AGENT, SERVICE_KEY, resolve_model, service_for
 from ..avoidance import available as avoidance_models
 from ..behavior import NavCore, NavParams, build_tree
-from ..caution import RETIRED, CautionProbe
+from ..caution import _CROSSING, RETIRED, CautionProbe
 from ..control import LAWS, STOPPED
 from ..grid import DEFAULT_RESOLUTION, build_grid, grid_key
 from ..handle import NavHandle, Sequencer
@@ -137,7 +138,7 @@ OUTPUT_KEYS = (
 #: mover that does neither is not thereby harmless: a mocap body has no degrees of freedom, so the
 #: solver treats it as immovable and it shoves anything free it touches, however politely that thing
 #: stopped for it.
-AVOIDANCE_KEYS = ("steer", "stop", "reroute", "params")
+AVOIDANCE_KEYS = ("steer", "stop", "reroute", "params", "sidestep")
 
 #: How the planned path is turned into motion.
 #:
@@ -197,6 +198,17 @@ _PROBE_FIELDS = {
     "ignore": Field(list, default=[], doc="entities this mover never stops for"),
 }
 
+#: ``avoidance.sidestep``: how far a mover on its route may leave it to get round what stands in
+#: its way, and where it starts and is back.
+SIDESTEP_SCHEMA = {
+    "max": Field(float, default=1.0, unit="m", doc="how far from its route it may go"),
+    "onset": Field(
+        float, default=2.2, unit="m", doc="steps aside this far before what is in its way"
+    ),
+    "back": Field(float, default=4.85, unit="m", doc="is back on its route this far after it"),
+    "clearance": Field(float, default=0.24, unit="m", doc="the gap it keeps from what it passes"),
+}
+
 #: ``avoidance:``: the three capabilities (:data:`AVOIDANCE_KEYS`), the model's parameters, and the
 #: probe's tuning.
 AVOIDANCE_SCHEMA = {
@@ -206,6 +218,15 @@ AVOIDANCE_SCHEMA = {
     ),
     "reroute": Field(bool, default=False, doc="plan around what stopped it; needs stop"),
     "params": Field(dict, default={}, doc="the steer model's world-level keys"),
+    "sidestep": Field(
+        (dict, bool),
+        default=None,
+        schema=SIDESTEP_SCHEMA,
+        doc=(
+            "steer none, stop: steps aside round what stands in its way, and back; default: off, "
+            "or what its embodiment declares; false: off, whatever that declares"
+        ),
+    ),
     **_PROBE_FIELDS,
 }
 
@@ -275,6 +296,27 @@ def _validate_avoidance(config: dict, base_dir) -> list[str]:
         for key, why in RETIRED.items()
         if key in spec
     ]
+    if spec.get("sidestep") is True:
+        errors.append(
+            "'avoidance.sidestep' is a block, or false to keep a mover standing before what is in "
+            "its route; write {} for the block's defaults."
+        )
+    elif isinstance(spec.get("sidestep"), dict):
+        if spec.get("steer", "none") != "none":
+            errors.append(
+                "'avoidance.sidestep' is how a mover that does not steer gets round what stands in "
+                "its way; a mover that steers is taken round by its model. Drop one of the two."
+            )
+        if not spec.get("stop", True):
+            errors.append("'avoidance.sidestep' needs 'stop': it steps aside for what it looks at.")
+        if config.get("route_mode") == "exact":
+            errors.append(
+                "'avoidance.sidestep' leaves the route, and a route_mode: exact route is walked as "
+                "given. Drop one of the two."
+            )
+        for key, value in (spec.get("sidestep") or {}).items():
+            if _number(value) and value <= 0:
+                errors.append(f"'avoidance.sidestep.{key}' must be > 0")
     if spec.get("reroute") and not spec.get("stop", True):
         errors.append(
             "'avoidance.reroute' needs 'stop': a blockage is only ever discovered by looking ahead "
@@ -296,6 +338,60 @@ def _validate_avoidance(config: dict, base_dir) -> list[str]:
             errors += _params_errors("avoidance.params", cls, steer, spec.get("params"))
             errors += _params_errors("params", cls, steer, config.get("params"))
     return errors + CautionProbe.validate({k: v for k, v in spec.items() if k in _PROBE_FIELDS})
+
+
+#: How often (s) the heading with the freest way is chosen again while stepping aside: a person
+#: does not change their mind every tick, and each choice looks along 13 headings.
+_CHOOSE_EVERY = 0.1
+
+#: How much room beyond ``stop_gap`` a heading must have to be taken to step aside: one the mover
+#: would stand on at once is no way round.
+_ROOM = 0.2
+
+#: How far (m) to one side of the mover someone coming the other way must be, across its route,
+#: for it to pass on the side away from them; nearer, they are on its line and it passes on its
+#: right.
+_ON_LINE = 0.1
+
+#: How much faster across its way than toward it someone coming toward the mover may move and still
+#: be coming toward it, to step round, not crossing, to wait for: 2, about 63 degrees off its line.
+#: Stepping aside, a mover turns up to 90 degrees from its way, and is most of the time within that.
+_ONCOMING = 2.0
+
+
+def _project(pos, route):
+    """``(point, offset, leg, direction)``: where ``pos`` is nearest the polyline ``route``, how far
+    beside it (left positive), on which leg, and that leg's direction."""
+    best = None
+    for k, (a, b) in enumerate(zip(route[:-1], route[1:], strict=False)):
+        d = b - a
+        n = float(np.linalg.norm(d))
+        if n < 1e-9:
+            continue
+        u = d / n
+        t = float(np.clip((pos - a) @ u, 0.0, n))
+        p = a + u * t
+        dist = float(np.linalg.norm(pos - p))
+        if best is None or dist < best[0]:
+            left = float(u[0] * (pos - a)[1] - u[1] * (pos - a)[0])
+            best = (dist, p, left, k, u)
+    if best is None:
+        return np.asarray(pos, dtype=float), 0.0, 0, np.array([1.0, 0.0])
+    _, p, left, k, u = best
+    return p, left, k, u
+
+
+def _along_route(route, k, point, distance: float):
+    """The point ``distance`` on along the polyline ``route`` from ``point`` on its leg ``k``, or its
+    end."""
+    here, left = np.asarray(point, dtype=float), float(distance)
+    for b in route[k + 1 :]:
+        step = float(np.linalg.norm(b - here))
+        if step >= left:
+            return here + (b - here) / step * left if step > 1e-9 else b
+        left -= step
+        here = b
+    return here
 
 
 def _dwell_pair(d) -> tuple[float, float]:
@@ -619,6 +715,10 @@ class NavigatorPlugin(Plugin):
         # says nothing: a world's own key wins, and each value taken is logged, so the choice the
         # default made is never hidden.
         declared = dict(getattr(self._output, "avoidance_defaults", None) or {})
+        if avoid.get("steer", "none") != "none" or not avoid.get("stop", True):
+            # Stepping aside is for a mover on its route that looks ahead; a steered one is taken
+            # round by its model.
+            declared.pop("sidestep", None)
         taken = {k: v for k, v in declared.items() if k not in avoid}
         if taken:
             logger.info(
@@ -654,6 +754,16 @@ class NavigatorPlugin(Plugin):
             }
         )
         self._caution.attach(ctx, entity)
+        # `sidestep: false` keeps it off, whatever its embodiment declares: a world's own key wins.
+        side = avoid.get("sidestep")
+        self._sidestep = (
+            {k: float(side.get(k, f.default)) for k, f in SIDESTEP_SCHEMA.items()}
+            if isinstance(side, Mapping)
+            else None
+        )
+        self._aside = 0.0  # the largest offset of the step aside under way, 0 when on the route
+        self._side = 0  # the side it stepped to, left 1, right -1; 0 until it has chosen
+        self._chosen = None  # (sim time, heading) of the last choice of the freest way
 
         # Joining the avoidance model is deferred to on_reset, not done here: components are
         # configured with their owner, so a mover that does not steer, configured before the first
@@ -790,6 +900,7 @@ class NavigatorPlugin(Plugin):
         self._state.yaw = yaw
         self._last_pose = None
         self._paced_speed = None  # a run starts as its world says, not as the last one ended
+        self._aside, self._side, self._chosen = 0.0, 0, None
         self._state.waypoints[0] = (x, y)
         # Built again on the first tick, against this run's world.
         self._core.planner = None
@@ -891,9 +1002,10 @@ class NavigatorPlugin(Plugin):
                 wanted = preferred
 
         steering = self._avoid is not None and self._yields and not self._core.exact
-        if self._caution.check(
-            ctx, self._state.pos, 0.0, wanted, self._path_ahead(), steering=steering
-        ):
+        path = self._path_ahead()
+        if self._sidestep is not None and not self._yields and not self._core.exact:
+            wanted, path = self._step_aside(ctx, wanted, path)
+        if self._caution.check(ctx, self._state.pos, 0.0, wanted, path, steering=steering):
             # Hold: do NOT advance along the path. Whether the progress clock is rebased with it
             # depends on what is in the way. Traffic will move, so waiting for it must never look
             # like being stuck -- that is what would turn "wait for the robot to pass" into "back up
@@ -940,6 +1052,133 @@ class NavigatorPlugin(Plugin):
             now = target
         self._paced_speed = now
         return np.asarray(wanted, dtype=float) * (now / speed)
+
+    def _step_aside(self, ctx, wanted, path):
+        """``(wanted, path)`` for a mover on its route that steps aside round what stands in it.
+
+        What stands in its route, or would be passed closer than ``sidestep.clearance``, as soon as
+        it would reach ``sidestep.onset`` at its speed -- standing, coming the other way (met
+        sooner), or going its way slower than it -- has it take, every 0.1 s, the heading with the
+        freest way: of the headings within 90 degrees of its route's, every 15 degrees, each looked
+        along by the probe's corridor as far as it can see, the one that brings it nearest a point
+        ``back`` metres on along its route, as the heading of the freest way does for a
+        pedestrian. A heading that would take it more than ``sidestep.max`` from its route is not
+        taken, and each is looked along with ``sidestep.clearance`` more each side, the gap it
+        keeps from what it passes. Once it has chosen a side it keeps to it, and takes the other
+        only where nothing on its own is free; someone coming the other way it passes on the side
+        away from them, and on its right when they are on its line, as they do. With nothing in
+        the way, a mover that stepped aside walks back to its route, toward that point.
+        A mover crossing its route is waited for, as before; with no heading free, it stands. The
+        route is left and rejoined as events (``sidestep``, ``sidestep_back``), with the offset.
+        """
+        speed = float(np.hypot(wanted[0], wanted[1]))
+        if speed < 1e-9 or not path:
+            return wanted, path
+        st, probe, side = self._state, self._caution, self._sidestep
+        pos = np.asarray(st.pos, dtype=float)
+        anchor = tuple(st.path[max(0, st.path_idx - 1)])[:2] if st.path else tuple(pos)
+        route = [np.asarray(anchor, dtype=float), *(np.asarray(p, dtype=float) for p in path)]
+        proj, offset, k, along = _project(pos, route)
+        heading = float(np.arctan2(along[1], along[0]))
+        now = float(ctx.sim_time)
+        # `onset` is taken at its own pace: what comes the other way is met sooner, and looked
+        # for as many seconds ahead as `onset` is at its speed.
+        horizon = side["onset"] / speed
+        reach = side["onset"] + probe.horizon * speed
+        # What it would pass closer than `clearance` is in its way to step round.
+        wide = probe.width + 2.0 * side["clearance"]
+        _, _, things = probe._ahead(ctx, proj, heading, route[k + 1 :], reach, now, width=wide)
+        # Someone coming toward it is in its way even as they step aside themselves, which takes
+        # them across its way as fast as toward it: only one moving more across than toward it
+        # (more than :data:`_ONCOMING` times as fast) is crossing, and waited for.
+        in_way = [
+            t
+            for t in things
+            if (
+                abs(t["v_lat"]) <= max(_CROSSING, 0.5 * abs(t["v_along"]))
+                or (t["v_along"] < -_CROSSING and abs(t["v_lat"]) <= _ONCOMING * -t["v_along"])
+            )
+            and t["v_along"] < 0.8 * speed
+            and t["dist"] / (speed - min(t["v_along"], 0.0)) <= horizon
+        ]
+        # Toward a point `back` on along its route, but not past the end of the leg it is on:
+        # round a corner, a point beyond it would have it cut the corner.
+        target = _along_route(route[: k + 2], k, proj, side["back"])
+        if in_way:
+            last = self._chosen
+            if last is not None and now - last[0] < _CHOOSE_EVERY:
+                chosen = last[1]
+            else:
+                # Someone coming the other way is passed on the side away from them, or on its right
+                # where they are on its line: both do, so neither steps into the other's way.
+                oncoming = [t for t in in_way if t["v_along"] < -_CROSSING]
+                prefer = 0
+                if oncoming:
+                    rel = min(oncoming, key=lambda t: t["dist"])["xy"] - pos
+                    # where they are across its route from where it is, left of it positive
+                    across = float(along[0] * rel[1] - along[1] * rel[0])
+                    prefer = 1 if across < -_ON_LINE else -1
+                chosen = self._freest(ctx, pos, heading, offset, target, speed, now, prefer)
+                self._chosen = (now, chosen)
+            if chosen is None:
+                return wanted, path
+            if self._aside == 0.0:
+                ctx.events.emit(self.entity, "sidestep", at=[float(pos[0]), float(pos[1])])
+            self._aside = max(self._aside, abs(offset), 1e-3)
+            return np.array([np.cos(chosen), np.sin(chosen)]) * speed, None
+        if self._aside > 0.0 and abs(offset) > 0.05:
+            to = target - pos
+            dist = float(np.linalg.norm(to))
+            self._aside = max(self._aside, abs(offset))
+            return (to / dist * speed if dist > 1e-9 else wanted), None
+        if self._aside > 0.0:
+            ctx.events.emit(self.entity, "sidestep_back", offset=round(self._aside, 3))
+            self._aside = 0.0
+            self._side = 0
+        return wanted, path
+
+    def _freest(
+        self, ctx, pos, heading: float, offset: float, target, speed: float, now: float, prefer=0
+    ):
+        """The heading with the freest way within 90 degrees of ``heading`` and ``sidestep.max`` of
+        the route, toward ``target``; ``None`` where none is free.
+
+        Of the side it has chosen, or else of ``prefer`` (left 1, right -1, 0 either), only where
+        none on that side or straight on is free the other side's."""
+        probe, side = self._caution, self._sidestep
+        reach = max(side["onset"], probe.lookahead, probe.horizon * speed)
+        goal = float(np.arctan2(target[1] - pos[1], target[0] - pos[0]))
+        own = self._side or prefer
+        costs = []
+        for step in range(-6, 7):
+            turn = np.deg2rad(15.0 * step)
+            alpha = heading + turn
+            # where it takes it across the route, left of it positive, by when it chooses again
+            lateral = offset + float(np.sin(turn)) * speed * _CHOOSE_EVERY
+            if abs(lateral) > side["max"] and abs(lateral) > abs(offset):
+                continue
+            _, _, things = probe._ahead(
+                ctx, pos, alpha, None, reach, now, width=probe.width + 2.0 * side["clearance"]
+            )
+            # How far it can go this way before it meets what is in it: what comes toward it
+            # meets it sooner.
+            free = min(
+                (t["dist"] * speed / (speed - min(t["v_along"], 0.0)) for t in things),
+                default=reach,
+            )
+            if free <= probe.stop_gap + _ROOM:
+                continue
+            cost = reach**2 + free**2 - 2.0 * reach * free * np.cos(alpha - goal)
+            cost += 1e-6 * step  # a tie goes to the right
+            costs.append((cost, step, alpha))
+        # It keeps to its side: the other only where nothing on its own, or straight on, is free.
+        mine = [c for c in costs if c[1] * own >= 0] or costs
+        if not mine:
+            return None
+        _, step, best = min(mine)
+        if step != 0:
+            self._side = 1 if step > 0 else -1
+        return best
 
     def _path_ahead(self):
         """The route ahead as world xy points, the next first, for the probe to lay its corridor
