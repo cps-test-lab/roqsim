@@ -58,6 +58,9 @@ class WalkerOutput(NavOutput):
     kinematics = "holonomic"  # a person can step in any direction, including sideways
     update_hz = WALKER_UPDATE_HZ
     avoidance_defaults = WALKER_AVOIDANCE
+    #: A person's half width, 0.23 m: the disc a walker is to an avoidance model. Its model's hips
+    #: are 0.66 m across, wider than a person's.
+    agent_radius = 0.23
 
     def __init__(self, config: dict):
         super().__init__(config)
