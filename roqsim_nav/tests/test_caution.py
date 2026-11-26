@@ -515,14 +515,18 @@ def test_a_mover_does_not_wait_before_it_has_ever_been_blocked(tmp_path):
     Otherwise every mover holds for `clear_time` at the beginning of every run, having never
     met anything -- the timer starts from an unset value and reads as "the way only just cleared".
     """
-    engine = Engine(_world(tmp_path))  # nothing in the way at all
+    # nothing in the way at all, and a settle long enough to see
+    engine = Engine(_world(tmp_path, nav={"avoidance": {"lookahead": 1.0, "clear_time": 0.5}}))
     engine.setup()
     engine.reset()
     try:
         probe = _navigator(engine)._caution
+        start = _xy(engine)
         for _ in range(int(1.0 / engine.ctx.dt)):
             engine.step()
             assert not probe.blocked, "it held despite never having been blocked"
+        # 0.8 m/s for a second, less the first tick
+        assert _xy(engine)[0] - start[0] > 0.7, "it stood before it walked"
     finally:
         engine.shutdown()
 

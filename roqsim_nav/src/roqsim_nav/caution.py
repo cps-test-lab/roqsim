@@ -299,14 +299,16 @@ class CautionProbe:
             return True
         self.blocker_xy = None
         self.blocker_points = []
-        if self._clear_since is None:
-            # Never blocked, so there is nothing to settle after. Without this a mover holds for
-            # `clear_time` at the start of every run -- the timer would start from a cold
-            # `None` and read as "the way only just cleared" when in fact it was never shut.
+        if not self._was_blocked:
+            # Never blocked, so there is nothing to settle after, on this tick or any other until
+            # it is. Without this a mover holds for `clear_time` at the start of every run -- the
+            # timer would start on its first tick and read as "the way only just cleared" from the
+            # second, when in fact it was never shut.
             self._clear_since = now
-            if not self._was_blocked:
-                self.blocked = False
-                return False
+            self.blocked = False
+            return False
+        if self._clear_since is None:
+            self._clear_since = now
         self.blocked = (now - self._clear_since) < self.clear_time
         if self._sweep_held or (self._ray_held and not self.blocked):
             # About to set off after the rays held it, or held for the corridor already: the rays
