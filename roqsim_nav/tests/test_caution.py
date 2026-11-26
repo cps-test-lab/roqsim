@@ -550,10 +550,13 @@ POST = """<mujoco model="post">
 </mujoco>"""
 
 
-def _held_world(tmp_path, blocker_xml, *, clear_time=0.0, blocker_spawn=None, goals=None):
+def _held_world(
+    tmp_path, blocker_xml, *, clear_time=0.0, blocker_spawn=None, goals=None, avoidance=None
+):
     """The cart of :func:`_world`, and a driven blocker in its way at the origin.
 
-    ``blocker_spawn`` overrides keys of the blocker's ``spawn_model``; ``goals`` the cart's route.
+    ``blocker_spawn`` overrides keys of the blocker's ``spawn_model``; ``goals`` the cart's route;
+    ``avoidance`` adds keys to its ``avoidance:``.
     """
     tmp_path.mkdir(parents=True, exist_ok=True)
     navigator = {
@@ -561,7 +564,7 @@ def _held_world(tmp_path, blocker_xml, *, clear_time=0.0, blocker_spawn=None, go
         "goals": goals or [list(GOAL)],
         "obstacle_height": [0.05, 0.6],
         "recovery": {"enabled": True, "stuck_time": 0.5},
-        "avoidance": {"lookahead": 1.0, "clear_time": clear_time},
+        "avoidance": {"lookahead": 1.0, "clear_time": clear_time, **(avoidance or {})},
     }
     cart = {
         "spawn_model": {
@@ -938,5 +941,116 @@ def test_a_long_mover_that_turns_to_its_way_has_the_front_of_the_side_it_goes(tm
             _place(engine, _xy(engine) + (0.4, 0.3))  # abreast of its flank, as it goes
             engine.step()
         assert _xy(engine)[0] > start[0] + 0.3, "it held for a post beside its flank"
+    finally:
+        engine.shutdown()
+
+
+# -- the speed follows the gap ahead (decel, stop_gap, wait_gap, tau, horizon) ----------------------
+PACE = {"horizon": 3.0, "decel": 1.0, "stop_gap": 0.3, "wait_gap": 0.85}
+
+
+def _speeds(engine, seconds, each=None):
+    """The cart's x and speed at every navigator tick for ``seconds``; ``each(t)`` runs first."""
+    xs, ts = [], []
+    start = engine.ctx.sim_time
+    for _ in range(int(seconds / engine.ctx.dt)):
+        if each is not None:
+            each(engine.ctx.sim_time - start)
+        engine.step()
+        x = _xy(engine)[0]
+        if not xs or x != xs[-1]:
+            xs.append(x)
+            ts.append(engine.ctx.sim_time)
+    x, t = np.array(xs), np.array(ts)
+    return x, t, np.r_[0.0, np.diff(x) / np.maximum(np.diff(t), 1e-9)]
+
+
+def test_with_decel_it_slows_to_a_stand_short_of_what_stands_in_its_way(tmp_path):
+    """Slowing on the stop that ``decel`` allows, not all at once, and standing ``stop_gap`` short."""
+    engine = Engine(_held_world(tmp_path, LOW_ROBOT, avoidance=PACE))
+    engine.setup()
+    engine.reset()
+    try:
+        x, _, v = _speeds(engine, 8.0)
+        slowing = v[(v > 0.1) & (v < 0.6)]  # set speed 0.8
+        assert slowing.size >= 5, "it went from walking to standing in a tick or two"
+        # the cart's front (0.25 m) stands 0.3 m short of the base's edge (0.2 m before its centre)
+        assert x[-1] == pytest.approx(-0.2 - 0.3 - 0.25, abs=0.05)
+    finally:
+        engine.shutdown()
+
+
+def test_with_decel_it_stands_further_back_for_a_mover_crossing_ahead(tmp_path):
+    """A robot crossing slowly ahead is stood short of by ``wait_gap``, not ``stop_gap``."""
+    away = {"pose": {"position": {"x": 0.0, "y": 8.0, "z": 0.0}}}
+    engine = Engine(_held_world(tmp_path, LOW_ROBOT, blocker_spawn=away, avoidance=PACE))
+    engine.setup()
+    engine.reset()
+    try:
+        # across the cart's way at 0.15 m/s, from 0.4 m to its left: in the corridor until 6 s,
+        # and still in it at 4.5 s, when the cart has stood a while
+        x, t, _ = _speeds(engine, 4.5, each=lambda t: _place(engine, (0.0, 0.4 - 0.15 * t)))
+        assert x[-1] == pytest.approx(-0.2 - 0.85 - 0.25, abs=0.08)
+    finally:
+        engine.shutdown()
+
+
+def test_a_mover_crossing_that_will_have_left_is_not_slowed_for(tmp_path):
+    """A robot crossing fast, well ahead: gone from the corridor before the cart gets there."""
+    away = {"pose": {"position": {"x": 0.0, "y": 8.0, "z": 0.0}}}
+    engine = Engine(_held_world(tmp_path, LOW_ROBOT, blocker_spawn=away, avoidance=PACE))
+    engine.setup()
+    engine.reset()
+    try:
+        # 1.2 m/s across, through the cart's line when the cart is 2.8 m short of it
+        x, _, v = _speeds(engine, 4.0, each=lambda t: _place(engine, (0.0, 1.5 - 1.2 * t)))
+        assert v[5:].min() > 0.9 * 0.8, "it slowed for a robot that crossed ahead of it"
+    finally:
+        engine.shutdown()
+
+
+def test_after_a_hold_it_walks_off_with_tau(tmp_path):
+    """Set off by the robot leaving, its speed rises to the set speed with ``tau``."""
+    engine = Engine(
+        _held_world(tmp_path, LOW_ROBOT, avoidance={**PACE, "tau": 0.5}, clear_time=0.0)
+    )
+    engine.setup()
+    engine.reset()
+    try:
+        _run(engine, 8.0)
+        assert _navigator(engine)._caution.blocked
+        _place(engine, (0.0, 8.0))
+        x, t, v = _speeds(engine, 3.0)
+        t = t - t[0]
+        fast = t[np.argmax(v >= 0.9 * 0.8)]
+        assert fast == pytest.approx(0.5 * np.log(10.0), abs=0.15)
+    finally:
+        engine.shutdown()
+
+
+def test_a_run_after_one_that_ended_held_walks_off_as_a_fresh_one(tmp_path):
+    """A run is a function of its world: the pace one run ended on does not carry into the next."""
+    pace = {**PACE, "tau": 0.5}
+
+    def first_half_second(engine):
+        start = _xy(engine)[0]
+        _run(engine, 0.5)
+        return _xy(engine)[0] - start
+
+    fresh = Engine(_held_world(tmp_path / "a", LOW_ROBOT, avoidance=pace))
+    fresh.setup()
+    fresh.reset()
+    try:
+        walked_fresh = first_half_second(fresh)
+    finally:
+        fresh.shutdown()
+    engine = Engine(_held_world(tmp_path / "b", LOW_ROBOT, avoidance=pace))
+    engine.setup()
+    engine.reset()
+    try:
+        _run(engine, 8.0)
+        assert _navigator(engine)._caution.blocked, "the first run did not end held"
+        engine.reset()
+        assert first_half_second(engine) == pytest.approx(walked_fresh, abs=1e-3)
     finally:
         engine.shutdown()
