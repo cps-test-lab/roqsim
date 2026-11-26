@@ -279,7 +279,10 @@ class View:
             warnings.append("principal point more than a quarter of the image from its centre")
         conv = self.convention
         label = conv.preset if conv and conv.preset else "keys" if conv else "roqsim"
-        look = f"{toward}, {abs(elevation):.0f}° {'up' if elevation > 0 else 'down'}"
+        if abs(elevation) < 0.5:
+            look = f"{toward}, level"
+        else:
+            look = f"{toward}, {abs(elevation):.0f}° {'up' if elevation > 0 else 'down'}"
         if roll is None:
             up_text = f"up is {_vec(up)}, roll not defined (looking straight {toward[1:]})"
         else:
@@ -328,7 +331,7 @@ class View:
 
 
 def _vec(v) -> str:
-    return " ".join(f"{float(c):+.2f}" for c in v)
+    return " ".join(f"{round(float(c), 2) + 0.0:+.2f}" for c in v)
 
 
 def _nearest_axis(v, names: Sequence[str]) -> str:
@@ -731,12 +734,13 @@ def render_views(
     geomgroup: Sequence[int] | None = None,
     overrides: Mapping | None = None,
     base_dir=None,
+    no_ceiling: bool = False,
 ) -> RenderedViews:
     """Draw *views* of *source*: ``(View, Frame)`` per view, as the result is iterated.
 
     *source* is a target as ``roqsim render`` takes it (a world YAML, an MJCF, a model reference, a
     mesh), built as ``roqsim render`` builds it with *overrides*, or a compiled ``(model, data)``
-    pair, drawn as it is. *images* are drawn for every view (colour by default); *renderer* (the
+    pair, drawn as it is (*no_ceiling*: a target's ceiling left out, as ``--no-ceiling``). *images* are drawn for every view (colour by default); *renderer* (the
     world's ``sim.renderer`` by default, MuJoCo's for a bare model) and its *settings* lay over the
     world's. A renderer that does not give an image or a posed camera is refused, with the reason,
     before anything is drawn.
@@ -745,7 +749,9 @@ def render_views(
     if isinstance(source, str | Path):
         from .render import build_target, renderer_choice  # noqa: PLC0415 -- avoids a cycle
 
-        model, data, ctx, _view, _cam = build_target(str(source), dict(overrides or {}) or None)
+        model, data, ctx, _view, _cam = build_target(
+            str(source), dict(overrides or {}) or None, no_ceiling=no_ceiling
+        )
         if ctx is not None:
             on_close = ctx.engine.shutdown
         asked = {k: dict(v) if isinstance(v, Mapping) else v for k, v in (overrides or {}).items()}

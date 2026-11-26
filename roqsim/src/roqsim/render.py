@@ -10,6 +10,14 @@ camera maths). Same relationship ``roqsim.export_gltf`` has with ``roqsim export
     roqsim render prop.obj --out prop.png                        # a raw mesh, pre-finalization
     roqsim render --state run.mcap --from onset --out clip.mp4    # a run, the whole scene from above
     roqsim render --state run.mcap --camera-path orbit.yaml --overlay clock --out clip.mp4
+    roqsim render world.yaml --views views.yaml --images rgb,depth --out views/   # real cameras
+
+``--views FILE`` draws a list of cameras, each a pose and pinhole intrinsics (a views file,
+:mod:`roqsim.views`; ``roqsim views describe`` prints its conventions), into ``--out DIR``: per view
+``<name>.png``, ``<name>.depth.npy`` and ``<name>.seg.png`` as ``--images`` asks (colour by default),
+and one ``manifest.json``. It is a second camera grammar beside ``sim.view`` on purpose: a file of
+fixed cameras with roll and a principal point, which ``sim.view`` cannot state. With ``--check`` it
+says per view, on stderr, how it read the file, and draws nothing.
 
 The positional argument takes the *same* shapes as ``roqsim sim`` (see :func:`roqsim.runner.config_for_input`)
 plus one more: a raw mesh. ``roqsim sim`` refuses meshes on purpose -- loose geometry is not something you
@@ -1351,10 +1359,209 @@ def _moment(text: str):
         raise argparse.ArgumentTypeError(str(err)) from None
 
 
+#: What ``--views`` cannot be combined with, and why.
+_NOT_WITH_VIEWS = {
+    "size": "each view states its own size",
+    "view": "each view states its own pose",
+    "focus": "each view states its own pose",
+    "camera": "each view states its own pose",
+    "camera_path": "a views file is one moment of fixed cameras",
+    "overlay": "the images are written as drawn, without loss",
+    "start": "a views file is drawn at one moment (--at)",
+    "stop": "a views file is drawn at one moment (--at)",
+}
+
+
+def parse_images(text: str | None) -> tuple[str, ...]:
+    """``--images rgb,depth`` -> ``("rgb", "depth")``; colour alone when none are named."""
+    from .render_api import IMAGES
+
+    if text is None:
+        return ("rgb",)
+    names = tuple(dict.fromkeys(p for p in text.replace(",", " ").split() if p))
+    unknown = [n for n in names if n not in IMAGES]
+    if not names or unknown:
+        raise RenderError(f"--images {text!r}: some of {', '.join(IMAGES)}, comma-separated")
+    return names
+
+
+def _renderer_asked(overrides: dict | None) -> str | None:
+    sim = (overrides or {}).get("sim") or {}
+    return sim.get("renderer")
+
+
+def render_views_target(
+    target: str | None,
+    views: str | Path,
+    out: str | Path,
+    *,
+    images: tuple[str, ...] = ("rgb",),
+    overrides: dict | None = None,
+    check: bool = False,
+    state: str | Path | None = None,
+    at=None,
+    geomgroup: list[int] | None = None,
+    no_ceiling: bool = False,
+) -> dict:
+    """``roqsim render --views``: draw a views file of *target* (or of a recording at *at*) into the
+    directory *out*, through :func:`roqsim.views.render_views`, and return the record it prints.
+
+    With *check*, nothing is drawn or written: the file is read, the world built, every view held to
+    the renderer's capabilities, and the record carries how each view was read (``reading``).
+    """
+    from .registry import resolve_renderer
+    from .views import ViewsError, load_views, render_views, write_views
+
+    out = Path(out)
+    if out.suffix.lower() in _IMAGE_EXT + _VIDEO_EXT:
+        raise RenderError(
+            f"--out {out}: with --views, --out is a directory the views are written into, one "
+            "file per view and image"
+        )
+    if not state and not target:
+        raise RenderError(
+            "nothing to render: give a world/scene/model/mesh, or --state a recording."
+        )
+    if not state and at is not None:
+        raise RenderError("--at selects a moment in a recording, so it needs --state.")
+    try:
+        views_file = load_views(views)
+    except ViewsError as err:
+        raise RenderError(str(err)) from None
+    asked = _renderer_asked(overrides)
+    if asked:
+        # Before any world compiles: an image the chosen renderer does not give.
+        try:
+            caps = resolve_renderer(asked).capabilities_for(
+                ((overrides or {}).get("sim", {}).get("renderers") or {}).get(asked) or {}
+            )
+        except PluginError as err:
+            raise RenderError(str(err)) from None
+        lacking = [i for i in images if i not in caps.images]
+        if lacking:
+            raise RenderError(
+                f"renderer {asked!r} does not give image {', '.join(map(repr, lacking))}; it gives "
+                f"{', '.join(sorted(caps.images))}"
+            )
+    if not check:
+        out.mkdir(parents=True, exist_ok=True)
+        if not os.access(out, os.W_OK):
+            raise RenderError(f"--out {out} is not writable")
+    try:
+        check_gl_backend()
+    except GLBackendError as err:
+        raise RenderGLError(
+            f"{err}\n  (Set MUJOCO_GL=egl for a GPU, or MUJOCO_GL=osmesa for CPU-only.)"
+        ) from err
+    record: dict = {
+        "out": str(out.resolve()),
+        "views_file": str(Path(views).resolve()),
+        "convention": views_file.convention.as_record(),
+        "views": len(views_file),
+        "images": list(images),
+    }
+    readings = [v.describe() for v in views_file]
+    if check:
+        # How each view was read, in plain words, before a picture is drawn: a wrong convention
+        # shows here as a camera looking the wrong way or standing upside down.
+        for reading in readings:
+            print(reading["text"], file=sys.stderr)
+    extra = {
+        "target": target,
+        "views_file": {"path": record["views_file"], "sha256": views_file.sha256},
+        "convention": record["convention"],
+    }
+    with contextlib.ExitStack() as stack:
+        if state:
+            from .recording import open_recording
+
+            rec = stack.enter_context(open_recording(state))
+            model, ctx = rec.build(target, no_ceiling=no_ceiling)
+            at = _resolve_at(rec, model, at)
+            sample = rec.at(at)
+            if at is None:
+                log.info(
+                    "drawing the LAST sample (t=%.3f s); use --at T for another", sample.sim_time
+                )
+            choice = renderer_choice(ctx, overrides)
+            source = (model, sample.data)
+            extra.update({"state": str(state), **rec.at_record(at, sample)})
+            rendered = render_views(
+                source,
+                views_file,
+                images=images,
+                renderer=choice.get("renderer"),
+                settings=choice.get("settings"),
+                base_dir=choice.get("base_dir"),
+                geomgroup=geomgroup,
+            )
+            rendered.ctx = ctx
+        else:
+            rendered = render_views(
+                target,
+                views_file,
+                images=images,
+                overrides=overrides,
+                geomgroup=geomgroup,
+                no_ceiling=no_ceiling,
+            )
+        stack.callback(rendered.close)
+        record["renderer"] = rendered.renderer
+        record["conditions"] = conditions_of_model(rendered.model)
+        if check:
+            record["reading"] = readings
+            record["rendered"] = False
+            return record
+        manifest = write_views(out, rendered, extra)
+    record["manifest"] = str((out / "manifest.json").resolve())
+    record["rendered"] = True
+    record["files"] = sum(len(v["files"]) for v in manifest["views"])
+    return record
+
+
+def _resolve_at(rec, model, at):
+    """``--at`` in seconds, a named moment resolved against the recording."""
+    from .camera_path import CameraPathError, Moment
+
+    if not isinstance(at, Moment):
+        return at
+    from .motion import MotionError, motion_onset
+
+    try:
+        onset = motion_onset(rec, model=model)
+        return at.resolve({ONSET: onset.time})
+    except (MotionError, CameraPathError) as err:
+        raise RenderError(f"--at {at}: {err}") from None
+
+
+def _views_help() -> str:
+    """``--views``' help: one line per preset, from :data:`roqsim.views.PRESETS`."""
+    from .views import DESCRIBE, preset_lines
+
+    return "\n".join(
+        [
+            "draw a list of camera views (a JSON/YAML views file) into --out DIR; the file names",
+            "its convention, a preset or the keys axes/rotation/pixel_origin:",
+            *preset_lines("  "),
+            f"`{DESCRIBE}` prints the conventions and an example file",
+        ]
+    )
+
+
+class _HelpFormatter(argparse.HelpFormatter):
+    """Rewraps help as argparse does, except a help of several lines, which keeps its lines."""
+
+    def _split_lines(self, text, width):
+        if "\n" in text:
+            return text.splitlines()
+        return super()._split_lines(text, width)
+
+
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim render",
         description=__doc__.split("\n")[0],
+        formatter_class=_HelpFormatter,
         epilog=exit_status.epilog(
             exit_status.BAD_INPUT,
             exit_status.NO_GL,
@@ -1375,7 +1582,14 @@ def main(argv: list | None = None) -> int:
     parser.add_argument(
         "--out", default=_DEFAULT_OUT, help=f"output file (default: {_DEFAULT_OUT})"
     )
-    parser.add_argument("--size", default=_DEFAULT_SIZE, help=f"WxH (default: {_DEFAULT_SIZE})")
+    parser.add_argument("--size", default=None, help=f"WxH (default: {_DEFAULT_SIZE})")
+    parser.add_argument("--views", metavar="FILE", help=_views_help())
+    parser.add_argument(
+        "--images",
+        metavar="LIST",
+        help="with --views: the images written per view, some of rgb,depth,segmentation "
+        "(default: rgb); a renderer that does not give one is refused",
+    )
     # nargs="+" so several keys can share one flag (`--view azimuth=90 distance=30`), which is how a
     # camera is naturally written; repeating the flag works too. A greedy nargs can swallow the
     # positional target, so view_overrides refuses a token with no "=" and says why.
@@ -1490,6 +1704,32 @@ def main(argv: list | None = None) -> int:
             f"{args.target!r} looks like an output file, not something to render; "
             "put the world/model first: roqsim render <target> --out <file>"
         )
+    if args.views:
+        given = [k for k in _NOT_WITH_VIEWS if getattr(args, k, None)]
+        if given:
+            k = given[0]
+            parser.error(f"--views with --{k.replace('_', '-')}: {_NOT_WITH_VIEWS[k]}")
+        try:
+            record = render_views_target(
+                args.target,
+                args.views,
+                args.out,
+                images=parse_images(args.images),
+                overrides=overrides_from_options(args),
+                check=args.check,
+                state=args.state,
+                at=args.at,
+                geomgroup=_parse_geomgroup(parser, args.geomgroup),
+                no_ceiling=args.no_ceiling,
+            )
+        except (RenderError, RecordingError, PluginError, ModelError, CaptureError) as err:
+            return exit_status.fail("roqsim render", err)
+        print(json.dumps(record))
+        return 0
+    if args.images:
+        parser.error("--images chooses the images of --views; a still is colour")
+    if args.size is None:
+        args.size = _DEFAULT_SIZE
     if args.overlay and "list" in args.overlay:
         from .render_overlays import available
 

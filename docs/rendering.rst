@@ -195,6 +195,62 @@ exactly one of ``R`` (3x3 rows, orthonormal with determinant +1 to 1e-6) or ``qu
 only the mapping is admitted, since a ROS list is ``x, y, z, w``. The camera's centre is
 ``position``, a list or ``{x, y, z}``.
 
+Drawing it
+~~~~~~~~~~
+
+.. code-block:: bash
+
+   roqsim render <target> --views FILE --out DIR [--images rgb,depth,segmentation]
+                 [--renderer NAME] [--state run.mcap [--at T]] [--set k=v] [--override f.yaml]
+                 [--geomgroup N,...] [--check]
+
+The target is anything ``roqsim render`` takes; with ``--state`` the recording names its world and
+``--at`` picks the moment. Every view of the file is drawn by one renderer, opened once, in batches
+from one state, so a file of thousands of views of different sizes is one process. ``--out`` is a
+directory, and per view it holds each image ``--images`` asks for (colour alone by default, the same
+for every renderer):
+
+* ``<name>.png``: colour, 8-bit RGB as the renderer gives it;
+* ``<name>.depth.npy``: float32 metres along the view axis (z-depth, not the distance along the
+  pixel's ray), ``+inf`` where nothing was drawn;
+* ``<name>.seg.png``: uint16, per pixel an index into the manifest's ``legend`` (0: background; each
+  other names the object's type, id, name, body and entity).
+
+``manifest.json`` lists what drew them: roqsim's version, the target (and the recording and its
+moment), the renderer with its settings and capabilities, the world's conditions (``bake_used``),
+the views file with its sha256 and its convention, the images, the depth convention, the legend,
+and per view its size, its intrinsics and pose in roqsim's form, its clip planes and each file with
+its sha256. A renderer that does not give an image asked for, or a posed camera, is refused with the
+reason, before the world compiles where ``--renderer`` names it; nothing is drawn another way.
+``--size``, ``--view``, ``--focus``, ``--camera``, ``--camera-path``, ``--overlay`` and
+``--from``/``--to`` are refused beside ``--views``: the file states every camera, at one moment.
+
+``--check`` draws nothing. It says per view, on stderr, how it read the file -- where the camera
+stands, which way it looks and what is up in the world frame, and where the principal point lies in
+the picture -- so that a wrong preset shows before a picture is drawn::
+
+   view_0001 (colmap): stands at x -2.000, y 0.000, z 1.000 m; looks along +1.00 +0.00 +0.00,
+   toward +x, level; up is +0.00 +0.00 +1.00, toward +z, rolled 0°; principal point 0.0 px right
+   of and 0.0 px above the image centre (640x480)
+
+It warns, without refusing, where a wrong convention typically shows: a picture whose up points
+down the world's z ("upside down"), a principal point outside the image, or one more than a quarter
+of the image from its centre. The JSON line carries the same per view under ``reading``.
+
+From Python, :func:`roqsim.views.render_views` is the same, for a target or for a compiled model and
+its data, and :func:`roqsim.views.write_views` writes what the command writes:
+
+.. code-block:: python
+
+   from roqsim.views import load_views, render_views, write_views
+
+   views = load_views("views.yaml")
+   for view, frame in render_views("roqsim_scenes:depot", views, images=("rgb", "depth")):
+       frame.rgb, frame.depth          # render_api.Frame
+   for view, frame in render_views((model, data), views):   # a model and its state, as they are
+       ...
+   write_views("renders/", render_views((model, data), views), {"target": "mine"})
+
 Finding the conventions without the docs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

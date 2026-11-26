@@ -340,3 +340,165 @@ def test_written_views_are_lossless_and_named_in_the_manifest(tmp_path):
     for record in files.values():
         digest = hashlib.sha256((tmp_path / record["path"]).read_bytes()).hexdigest()
         assert digest == record["sha256"]
+
+
+# -- `roqsim render --views` ---------------------------------------------------------------------
+
+#: A box turning about z on a spring, so a recording's moments differ.
+SPIN_XML = """
+<mujoco>
+  <option timestep="0.002"/>
+  <visual><quality offsamples="0"/></visual>
+  <worldbody>
+    <light pos="0 0 3"/>
+    <geom name="floor" type="plane" size="3 3 .1" rgba=".5 .5 .5 1"/>
+    <body name="spinner" pos="0 0 .3">
+      <joint name="spin" type="hinge" axis="0 0 1" stiffness="2" springref="90" damping="0.2"/>
+      <geom name="bar" type="box" size=".3 .1 .1" rgba=".8 .3 .2 1" mass="1" group="1"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def _views_file(tmp_path, n: int = 2) -> str:
+    """Cameras 2 m back along -x, 1 m up, looking at the spinner, as a ``mujoco`` file."""
+    from roqsim.views import example_file
+
+    doc, _ = example_file("mujoco")
+    base = doc["views"][0]
+    doc["views"] = [
+        {
+            **base,
+            "name": f"v{i}",
+            "width": 64 + 16 * i,
+            "height": 48,
+            "fx": 40.0,
+            "fy": 40.0,
+            "cx": 31.5 + 8 * i,
+            "cy": 23.5,
+        }
+        for i in range(n)
+    ]
+    for view in doc["views"]:
+        view["position"] = [-2.0, 0.0, 0.8]
+    path = tmp_path / "views.yaml"
+    path.write_text(yaml.safe_dump(doc))
+    return str(path)
+
+
+@pytest.fixture
+def scene(tmp_path):
+    path = tmp_path / "spin.xml"
+    path.write_text(SPIN_XML)
+    return str(path)
+
+
+def test_the_command_writes_each_view_and_a_manifest(scene, tmp_path, capsys):
+    from roqsim import render
+
+    out = tmp_path / "out"
+    args = [scene, "--views", _views_file(tmp_path), "--out", str(out)]
+    assert render.main([*args, "--images", "rgb,depth,segmentation"]) == 0
+    record = json.loads(capsys.readouterr().out)
+    assert record["rendered"] and record["views"] == 2 and record["files"] == 6
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert [v["name"] for v in manifest["views"]] == ["v0", "v1"]
+    assert np.array(Image.open(out / "v1.png")).shape == (48, 80, 3)
+    assert manifest["convention"]["preset"] == "mujoco"
+    # Colour alone unless more is asked for.
+    out2 = tmp_path / "out2"
+    assert render.main([scene, "--views", _views_file(tmp_path), "--out", str(out2)]) == 0
+    assert sorted(p.name for p in out2.iterdir()) == ["manifest.json", "v0.png", "v1.png"]
+
+
+def test_check_writes_nothing(scene, tmp_path, capsys):
+    from roqsim import render
+
+    out = tmp_path / "out"
+    code = render.main([scene, "--views", _views_file(tmp_path), "--out", str(out), "--check"])
+    assert code == 0 and not out.exists()
+    assert json.loads(capsys.readouterr().out)["rendered"] is False
+
+
+def test_geomgroup_reaches_every_view(scene, tmp_path, capsys):
+    from roqsim import render
+
+    out = tmp_path / "out"
+    views = _views_file(tmp_path)
+    args = [scene, "--views", views, "--out", str(out), "--images", "segmentation"]
+    assert render.main([*args, "--geomgroup", "0"]) == 0
+    legend = json.loads((out / "manifest.json").read_text())["legend"]
+    assert {e["name"] for e in legend[1:]} == {"floor"}  # the bar is in group 1
+
+
+def test_a_renderer_without_an_image_is_refused_before_the_world_compiles(scene, tmp_path, capsys):
+    from roqsim import render
+
+    path = tmp_path / "rgbonly.py"
+    path.write_text(
+        "from roqsim.render_api import Renderer, RendererCapabilities\n"
+        "class RgbOnly(Renderer):\n"
+        "    capabilities = RendererCapabilities(posed=True)\n"
+    )
+    args = ["nope.yaml", "--views", _views_file(tmp_path), "--out", str(tmp_path / "o")]
+    code = render.main([*args, "--images", "rgb,depth", "--renderer", f"{path}:RgbOnly"])
+    assert code == 2
+    assert "does not give image 'depth'" in capsys.readouterr().err  # not "nope.yaml"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--size", "64x48"],
+        ["--view", "azimuth=10"],
+        ["--camera", "cam"],
+        ["--camera-path", "{}"],
+    ],
+)
+def test_what_views_cannot_be_combined_with_is_refused(extra, scene, tmp_path, capsys):
+    from roqsim import render
+
+    with pytest.raises(SystemExit) as err:
+        render.main([scene, "--views", _views_file(tmp_path), "--out", str(tmp_path), *extra])
+    assert err.value.code == 2 and "--views with" in capsys.readouterr().err
+
+
+def test_an_image_file_as_out_is_refused(scene, tmp_path, capsys):
+    from roqsim import render
+
+    code = render.main([scene, "--views", _views_file(tmp_path), "--out", str(tmp_path / "a.png")])
+    assert code == 2 and "--out is a directory" in capsys.readouterr().err
+
+
+def test_images_without_views_is_refused(scene, tmp_path):
+    from roqsim import render
+
+    with pytest.raises(SystemExit):
+        render.main([scene, "--out", str(tmp_path / "a.png"), "--images", "depth"])
+
+
+def test_a_recording_is_drawn_at_the_moment_asked(scene, tmp_path, capsys, monkeypatch):
+    from roqsim import render
+    from roqsim.recording import open_recording
+    from roqsim.runner import run
+
+    rec_path = tmp_path / "spin.mcap"
+    run(scene, headless=True, pacing="asap", seconds=1.0, record=str(rec_path), capture_fps=25)
+    capsys.readouterr()
+    views = _views_file(tmp_path, n=1)
+    pictures = {}
+    for at in ("0", "0.9"):
+        out = tmp_path / f"at{at}"
+        assert (
+            render.main(["--state", str(rec_path), "--at", at, "--views", views, "--out", str(out)])
+            == 0
+        )
+        pictures[at] = np.array(Image.open(out / "v0.png"))
+    assert not np.array_equal(pictures["0"], pictures["0.9"])  # the bar has turned
+    # The same picture as the function drawing that sample.
+    with open_recording(rec_path) as rec:
+        model, _ctx = rec.build()
+        sample = rec.at(0.9)
+        ((_, frame),) = list(V.render_views((model, sample.data), V.load_views(views)))
+    assert np.array_equal(frame.rgb, pictures["0.9"])

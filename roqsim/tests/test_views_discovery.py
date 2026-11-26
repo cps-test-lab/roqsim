@@ -114,3 +114,100 @@ def test_the_docs_table_is_made_from_the_presets():
     rst = "\n".join(V.presets_rst())
     for name, c in V.PRESETS.items():
         assert f"``{name}``" in rst and c.source in rst
+
+
+# -- (a) `roqsim render --help` ------------------------------------------------------------------
+
+
+def test_render_help_names_every_preset_one_line_each(capsys):
+    from roqsim import render
+
+    with pytest.raises(SystemExit):
+        render.main(["--help"])
+    help_text = capsys.readouterr().out
+    lines = help_text.splitlines()
+    for name, c in V.PRESETS.items():
+        mine = [ln for ln in lines if re.match(rf"\s+{name}\s+\S", ln)]
+        assert len(mine) == 1, f"{name}: {mine}"
+        assert c.summary() in mine[0]
+    assert "roqsim views describe" in help_text
+
+
+def test_a_preset_added_gets_its_help_line(monkeypatch, capsys):
+    from roqsim import render
+
+    monkeypatch.setitem(
+        V.PRESETS, "blender", V.Convention("mujoco", "camera_to_world", "corner", "blender", "x")
+    )
+    with pytest.raises(SystemExit):
+        render.main(["--help"])
+    assert re.search(r"^\s+blender\s+x: ", capsys.readouterr().out, re.M)
+
+
+# -- (c) `--check` says how it read the file -----------------------------------------------------
+
+SCENE = """
+<mujoco><worldbody><light pos="0 0 3"/><geom type="plane" size="5 5 .1"/></worldbody></mujoco>
+"""
+
+
+def _check(tmp_path, convention, entry):
+    from roqsim import render
+
+    scene = tmp_path / "scene.xml"
+    scene.write_text(SCENE)
+    views = tmp_path / "views.json"
+    views.write_text(json.dumps({"convention": convention, "views": [entry]}))
+    return render.main([str(scene), "--views", str(views), "--out", str(tmp_path / "o"), "--check"])
+
+
+def _colmap_entry(**override):
+    doc, _ = V.example_file("colmap")
+    return {**doc["views"][0], **override}
+
+
+def test_check_says_per_view_where_it_stands_looks_and_what_is_up(tmp_path, capsys):
+    assert _check(tmp_path, "colmap", _colmap_entry()) == 0
+    out = capsys.readouterr()
+    line = next(ln for ln in out.err.splitlines() if ln.startswith("view_0001"))
+    assert "stands at x -2.000, y 0.000, z 1.000 m" in line
+    assert "toward +x, level" in line
+    assert "up is +0.00 +0.00 +1.00, toward +z, rolled 0°" in line
+    assert "principal point 0.0 px right of and 0.0 px above the image centre" in line
+    assert "WARNING" not in line
+    (reading,) = json.loads(out.out)["reading"]
+    assert reading["position"] == [-2.0, 0.0, 1.0] and reading["toward"] == "+x"
+
+
+def test_check_shows_a_wrong_preset_before_anything_is_drawn(tmp_path, capsys):
+    """The colmap example read with MuJoCo's axes: the camera looks backwards and stands on its
+    head, and --check says so before anything is drawn."""
+    entry = _colmap_entry()
+    entry["position"] = [-2.0, 0.0, 1.0]
+    del entry["t"]
+    assert (
+        _check(
+            tmp_path,
+            {"axes": "mujoco", "rotation": "world_to_camera", "pixel_origin": "corner"},
+            entry,
+        )
+        == 0
+    )
+    line = next(ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("view_0001"))
+    assert "toward -x" in line and "WARNING upside down" in line
+
+
+def test_check_says_where_an_off_centre_principal_point_lies(tmp_path, capsys):
+    assert _check(tmp_path, "colmap", _colmap_entry(cx=330.0, cy=230.0)) == 0
+    line = next(ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("view_0001"))
+    assert "principal point 10.0 px right of and 10.0 px above the image centre" in line
+
+
+# -- (d) the refusal, through the command --------------------------------------------------------
+
+
+def test_render_refuses_an_unknown_preset_naming_the_presets_and_the_command(tmp_path, capsys):
+    assert _check(tmp_path, "colmpa", _colmap_entry()) == 2
+    err = capsys.readouterr().err
+    for want in (*V.PRESETS, *V.KEYS, "did you mean 'colmap'", "roqsim views describe"):
+        assert want in err
