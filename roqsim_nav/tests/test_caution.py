@@ -297,7 +297,8 @@ def test_replan_reports_a_blocker_the_same_way_stop_does(tmp_path):
             if probe.blocked:
                 seen.extend(probe.blocker_points)
         assert seen, "the blocker went unseen"
-        # It reports a point per ray that found something, not one point for the whole corridor.
+        # It reports points across the corridor as far as the blocker spans it, not one point for
+        # the whole of it.
         assert any(not np.allclose(p, seen[0]) for p in seen)
     finally:
         engine.shutdown()
@@ -408,23 +409,20 @@ def test_reroute_without_stopping_is_refused(tmp_path):
         Engine(_world(tmp_path, nav={"avoidance": {"reroute": True, "stop": False}}))
 
 
-def test_the_probe_scans_inside_the_movers_own_obstacle_band(tmp_path):
-    """A fixed scan height is a guess about other people's robots, and one will be wrong.
-
-    0.30 m keeps a walker's rays from passing over a tall base, but it is above the roof of a
-    TurtleBot 4, whose collision geometry stops at 0.25 m -- so in a world of them every probe would
-    see nothing and nothing would ever stop for anything. Taking the height from the band the
-    planner already rasterizes ties it to what this mover treats as an obstacle.
-    """
-    probe = CautionProbe({"band": (0.1, 1.8)})
-    assert probe.height == pytest.approx(0.15)
-    low = CautionProbe({"band": (0.05, 0.6)})
-    assert low.height == pytest.approx(0.10)
-    assert CautionProbe({"band": (0.1, 1.8), "height": 0.9}).height == pytest.approx(0.9)
+def test_the_probe_counts_what_reaches_into_the_movers_own_obstacle_band():
+    """What is in the way is what reaches up into the band the mover's planner rasterizes walls in."""
+    assert CautionProbe({"band": (0.1, 1.8)}).band == (0.1, 1.8)
+    assert CautionProbe({}).band == (0.1, 1.8)
 
 
-# -- height and blockage_radius: derived when absent, used as written when set --------------------
-DERIVED = {"height": 0.10, "blockage_radius": 0.3}  # band (0.05, 0.6) + 5 cm; width 0.6 / 2
+@pytest.mark.parametrize("key", ["rays", "height"])
+def test_a_key_of_the_rays_is_refused_naming_why(tmp_path, key):
+    with pytest.raises(PluginError, match=rf"'avoidance\.{key}' is not read any more: the probe"):
+        _probe(tmp_path, **{key: 5})
+
+
+# -- blockage_radius: derived when absent, used as written when set -------------------------------
+DERIVED = {"blockage_radius": 0.3}  # width 0.6 / 2
 
 
 def _probe(tmp_path, **avoidance):
@@ -553,15 +551,15 @@ POST = """<mujoco model="post">
 </mujoco>"""
 
 
-def _held_world(tmp_path, blocker_xml, *, clear_time=0.0, blocker_spawn=None):
+def _held_world(tmp_path, blocker_xml, *, clear_time=0.0, blocker_spawn=None, goals=None):
     """The cart of :func:`_world`, and a driven blocker in its way at the origin.
 
-    ``blocker_spawn`` overrides keys of the blocker's ``spawn_model``.
+    ``blocker_spawn`` overrides keys of the blocker's ``spawn_model``; ``goals`` the cart's route.
     """
     tmp_path.mkdir(parents=True, exist_ok=True)
     navigator = {
         "speed": 0.8,
-        "goals": [list(GOAL)],
+        "goals": goals or [list(GOAL)],
         "obstacle_height": [0.05, 0.6],
         "recovery": {"enabled": True, "stuck_time": 0.5},
         "avoidance": {"lookahead": 1.0, "clear_time": clear_time},
@@ -651,13 +649,10 @@ def test_a_held_mover_sets_off_past_a_body_clear_of_its_corridor(tmp_path):
         engine.shutdown()
 
 
-def _release_time(tmp_path, sweep: bool) -> float:
+def _release_time(tmp_path) -> float:
     """When the cart sets off after the low robot has driven across its way and on."""
     engine = _held_engine(tmp_path, LOW_ROBOT, clear_time=0.5)
     try:
-        probe = _navigator(engine)._caution
-        if not sweep:
-            probe._sweep = lambda *a: []  # the release as it was decided on the rays alone
         start, held = engine.ctx.sim_time, _xy(engine)
         while engine.ctx.sim_time < start + 8.0:
             # Across the way at 0.15 m/s, sideways out of it.
@@ -670,8 +665,7 @@ def _release_time(tmp_path, sweep: bool) -> float:
         engine.shutdown()
 
 
-#: How fast the low robot crosses: slowly enough that its base is still in the corridor when the
-#: settle after its post has left the rays is over.
+#: How fast the low robot crosses.
 CROSSING = 0.15
 
 
@@ -679,14 +673,10 @@ def test_a_robot_that_drives_across_and_on_is_held_for_until_its_base_has_left(t
     """Held for as long as its base is in the corridor and ``clear_time`` after, not its post.
 
     The base (0.2 m) leaves the 0.6 m corridor when the robot's centre is 0.5 m to the side; its
-    post, all the rays see, 0.17 m before that. Setting off on the rays alone, the cart would pass
-    the base closer than it stops for.
+    post 0.17 m before that.
     """
     base_out = (0.3 + 0.2) / CROSSING
-    with_sweep = _release_time(tmp_path / "a", sweep=True)
-    rays_only = _release_time(tmp_path / "b", sweep=False)
-    assert rays_only < base_out, "the fixture no longer separates the post from the base"
-    assert with_sweep == pytest.approx(base_out + 0.5, abs=0.06)  # within a navigator tick
+    assert _release_time(tmp_path) == pytest.approx(base_out + 0.5, abs=0.06)  # within a tick
 
 
 def test_a_robot_back_in_the_corridor_before_the_settle_is_over_holds_it_again(tmp_path):
@@ -745,5 +735,84 @@ def test_a_mover_the_rays_never_held_is_not_held_by_the_corridor(tmp_path):
         start = _xy(engine)
         _run(engine, 3.0)
         assert _xy(engine)[0] > start[0] + 1.0, "it held for a mat its rays never stopped it for"
+    finally:
+        engine.shutdown()
+
+
+# -- what a corridor laid along the body sees that rays from its circumscribed radius did not --------
+def test_a_robot_standing_with_its_post_between_two_rays_holds_the_mover_before_it(tmp_path):
+    """A TurtleBot's shape on the way: a base below the band's floor plus 5 cm, a post 6 cm wide,
+    0.075 m to the side of the mover's line, between where rays at 0 and 0.15 m would pass."""
+    stands = {"position": {"x": 0.0, "y": 0.075, "z": 0.0}}
+    engine = Engine(_held_world(tmp_path, LOW_ROBOT, blocker_spawn={"pose": stands}))
+    engine.setup()
+    engine.reset()
+    try:
+        _run(engine, 8.0)
+        # the cart's front (0.25 m) stays clear of the base's edge (0.2 m before its centre)
+        assert _xy(engine)[0] < -0.45, "it drove into the robot's base"
+        assert _navigator(engine)._caution.blocked
+    finally:
+        engine.shutdown()
+
+
+def test_the_corridor_follows_the_path_round_a_turn(tmp_path):
+    """A post 0.3 m down the leg after a right-angle turn is seen before the corner."""
+    stands = {"position": {"x": 0.0, "y": -0.3, "z": 0.0}}
+    world = _held_world(
+        tmp_path, POST, blocker_spawn={"pose": stands}, goals=[[0.0, 0.0], [0.0, -2.5]]
+    )
+    engine = Engine(world)
+    engine.setup()
+    engine.reset()
+    try:
+        post = np.array([0.0, -0.3])
+        least = np.inf
+        for _ in range(int(10.0 / engine.ctx.dt)):
+            engine.step()
+            least = min(least, float(np.linalg.norm(_xy(engine) - post)))
+        # the cart's box (0.25 m half side, 0.35 m to a corner) never reaches the post (0.06 m)
+        assert least > 0.25 + 0.06, f"it came {least:.2f} m from the post's centre"
+    finally:
+        engine.shutdown()
+
+
+def test_a_robot_that_drives_into_the_movers_body_holds_it(tmp_path):
+    """Something that already reaches into the mover's body is in its way, as from its front."""
+    engine = Engine(
+        _held_world(
+            tmp_path,
+            LOW_ROBOT,
+            blocker_spawn={"pose": {"position": {"x": 0.0, "y": 8.0, "z": 0.0}}},
+        )
+    )
+    engine.setup()
+    engine.reset()
+    try:
+        _run(engine, 2.0)
+        cart = _xy(engine)
+        _place(engine, cart + np.array([0.15, 0.35]))  # its base 0.1 m into the cart's flank
+        _run(engine, 0.2)
+        held = _xy(engine)
+        _run(engine, 1.0)
+        assert _xy(engine) == pytest.approx(held, abs=0.01), "it walked on through the robot"
+    finally:
+        engine.shutdown()
+
+
+def test_a_robot_straight_ahead_past_a_turn_does_not_hold_the_mover(tmp_path):
+    """A robot standing 0.8 m beyond the corner, on the straight line the mover leaves there: a
+    corridor laid along the heading holds for it, for good; laid along the path, the mover turns
+    before it and walks on."""
+    stands = {"position": {"x": 0.8, "y": 0.0, "z": 0.0}}
+    world = _held_world(
+        tmp_path, POST, blocker_spawn={"pose": stands}, goals=[[0.0, 0.0], [0.0, -2.5]]
+    )
+    engine = Engine(world)
+    engine.setup()
+    engine.reset()
+    try:
+        _run(engine, 12.0)
+        assert _xy(engine)[1] < -2.0, f"it stood at {_xy(engine)} for a robot past the corner"
     finally:
         engine.shutdown()

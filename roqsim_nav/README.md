@@ -161,11 +161,12 @@ of what `wall_polygons` rasterizes, so a wall at a corner is never the probe's p
 mover is still on its path; a re-routing one has changed a trajectory the experiment may have been
 holding fixed, which is why stopping is the default and re-routing is asked for.
 
-A held mover sets off again only when the corridor it holds for is clear, filled in rather than
-sampled (`CautionProbe._sweep`): `width` across, from its body's front to the probe's reach, from
-the bottom of its body up (the floor, for a mover standing on it). The rays look at one height from
-the mover's circumscribed radius out, so a low robot base or a body beside the mover's front can
-stand in that corridor unseen by them.
+What is in the way is judged against the corridor the body is about to occupy, filled in and
+looked at every tick (`CautionProbe._ahead`): `width` across, from its body's front to `lookahead`
+beyond it, from the bottom of its body up (the floor, for a mover standing on it), laid along the
+path ahead. A thing that moves counts when any of its geoms, visual ones too, reaches into the
+mover's `obstacle_height` band, and is where its collidable geoms are, by their extent; what is in the way is what reaches past the
+body's front, so one already inside the body counts at once and one beside it does not. The same corridor decides holding and setting off.
 
 `reroute` remembers where it was stopped, as a disc that expires after `forget_after`, and plans
 around it. The memory is what makes it work at all: the grid is static, so a mover that only

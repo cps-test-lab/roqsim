@@ -88,7 +88,7 @@ from .._resolve import RegistryError
 from ..avoidance import NO_AGENT, SERVICE_KEY, resolve_model, service_for
 from ..avoidance import available as avoidance_models
 from ..behavior import NavCore, NavParams, build_tree
-from ..caution import CautionProbe
+from ..caution import RETIRED, CautionProbe
 from ..control import LAWS
 from ..grid import DEFAULT_RESOLUTION, build_grid, grid_key
 from ..handle import NavHandle, Sequencer
@@ -162,11 +162,7 @@ TRACKERS = ("waypoint", "pure_pursuit")
 #: The probe's tuning in ``avoidance:`` (:attr:`CautionProbe.KEYS`). Ranges are the probe's to check.
 _PROBE_FIELDS = {
     "lookahead": Field(float, default=1.2, unit="m", doc="clear corridor needed, from the front"),
-    "width": Field(float, default=0.6, unit="m", doc="corridor swept: the body plus its clearance"),
-    "rays": Field(int, default=5, doc="rays sampling that width"),
-    "height": Field(
-        float, default=None, unit="m", doc="scan height; default: obstacle_height's floor + 5 cm"
-    ),
+    "width": Field(float, default=0.6, unit="m", doc="corridor ahead: the body plus its clearance"),
     "clear_time": Field(float, default=0.5, unit="s", doc="the way stays open this long to go on"),
     "yield_time": Field(
         float, default=3.0, unit="s", doc="a blockage is traffic this long before recovery may run"
@@ -245,7 +241,11 @@ def _validate_avoidance(config: dict, base_dir) -> list[str]:
             "and `reroute` (remember a blockage and plan around it) -- plus the probe's tuning. "
             "For example: avoidance: {steer: give_way, stop: true, lookahead: 0.6}"
         ]
-    errors = []
+    errors = [
+        f"'avoidance.{key}' is not read any more: {why}. Remove it."
+        for key, why in RETIRED.items()
+        if key in spec
+    ]
     if spec.get("reroute") and not spec.get("stop", True):
         errors.append(
             "'avoidance.reroute' needs 'stop': a blockage is only ever discovered by looking ahead "
@@ -529,10 +529,9 @@ class NavigatorPlugin(Plugin):
         # Ground truth, not odometry: see NavOutput.pose.
         x, y, yaw = self._output.pose(ctx)
         # Read per tick rather than cached here: `data.xpos` is not populated until the first
-        # forward pass, so caching it in `configure` yields 0.0 -- and a ray cast along z = 0 grazes
-        # the bottom face of everything standing on the floor, which detects obstacles late and
-        # erratically instead of not at all. Reading it each tick is one array index and is always
-        # right, including for a body whose height changes.
+        # forward pass, so caching it in `configure` yields 0.0, a pose that is not where the body
+        # is. Reading it each tick is one array index and is always right, including for a body
+        # whose height changes.
         self._bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
         goals = [tuple(g)[:2] for g in (cfg.get("goals") or [])]
         waypoints = np.asarray([(x, y), *goals] if goals else [(x, y)], dtype=float)
@@ -840,7 +839,7 @@ class NavigatorPlugin(Plugin):
                 # still an agent the others give way to, but it walks the legs it was given
                 wanted = preferred
 
-        if self._caution.check(ctx, self._state.pos, 0.0, wanted):
+        if self._caution.check(ctx, self._state.pos, 0.0, wanted, self._path_ahead()):
             # Hold: do NOT advance along the path. Whether the progress clock is rebased with it
             # depends on what is in the way. Traffic will move, so waiting for it must never look
             # like being stuck -- that is what would turn "wait for the robot to pass" into "back up
@@ -863,6 +862,18 @@ class NavigatorPlugin(Plugin):
             return
 
         self._output.emit(ctx, wanted, yaw, step_dt)
+
+    def _path_ahead(self):
+        """The route ahead as world xy points, the next first, for the probe to lay its corridor
+        along; ``None`` while a steering model shapes the velocity, which then is the way ahead."""
+        if self._avoid is not None and self._yields and not self._core.exact:
+            return None
+        st = self._state
+        if not st.path:
+            return None
+        # The path runs to the current goal; past it, the route goes on to the goals after it.
+        later = [tuple(w)[:2] for w in st.waypoints[st.goal_idx + 1 :]]
+        return [tuple(p)[:2] for p in st.path[st.path_idx :]] + later
 
     def _remember_blockage(self, ctx) -> None:
         """Under ``avoidance.reroute``, mark what stopped us and plan around it.
