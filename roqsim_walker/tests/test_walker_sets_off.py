@@ -137,15 +137,24 @@ def test_a_held_walker_sets_off_once_the_robot_has_gone(held):
     assert _navigator(engine)._state.pos[0] > at[0] + 0.5, "it held for a robot that had gone"
 
 
-def test_a_held_walker_holds_for_a_robot_inside_its_corridor_though_clear_of_its_body(held):
-    """73 degrees off, the base 2 cm clear of where its feet go but inside the 0.6 m it stops for.
+def test_a_held_walker_does_not_pass_a_robot_inside_its_corridor_closer_than_it_stops_for(held):
+    """73 degrees off, the base 2 cm clear of where its feet go but inside the corridor it stops for.
 
-    It would pass without touching; it would also pass closer than it stops for, so it holds.
+    Walking on, it would pass without touching, but closer than it stops for. It holds, or steps
+    round the robot (``sidestep``, a walker's default) away from it: it never comes nearer the
+    robot than where the robot was put, 2 cm from its feet.
     """
     engine, at = held
+    model, data = engine.ctx.model, engine.ctx.data
+    walker = _collidable(model, engine.ctx.entities.get("pedestrian"))
+    robot = _collidable(model, engine.ctx.entities.get("robot"))
+    pairs = [(a, b) for a in walker for b in robot]
     _place(engine, at + np.array([0.10, 0.36]))
-    _run(engine, 3.0)
-    assert _navigator(engine)._state.pos == pytest.approx(at, abs=0.01)
+    mujoco.mj_forward(model, data)
+    put = min(mujoco.mj_geomDistance(model, data, a, b, 1.0, np.zeros(6)) for a, b in pairs)
+    least = _run(engine, 6.0, watch=pairs)
+    assert least > 0.0, f"it walked into the robot ({least * 1000:.0f} mm into it)"
+    assert least > put - 0.01, f"it came to {least * 1000:.0f} mm of it, from {put * 1000:.0f}"
 
 
 def test_a_held_walker_sets_off_past_a_robot_beside_it_and_clear_of_its_corridor(held):

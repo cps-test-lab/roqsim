@@ -632,6 +632,26 @@ abreast of it at a person's spacing is beside it, not in its way -- so a walker 
 meets what is in its way at a person's pace without its world writing any of them. A world's own key wins, and the navigator logs
 each value it takes from its output.
 
+**Stepping aside on its route** is ``sidestep``, for a mover that does not steer (``steer: none``,
+``stop: true``). What stands in its route -- standing, coming the other way, or going its way slower
+than it, or what it would pass closer than ``clearance`` -- has it take, every 0.1 s, the heading
+with the freest way: of the headings within 75 degrees of its route's, every 15 degrees, each looked
+along with ``clearance`` more each side, the one that brings it nearest a point ``back`` metres on
+along its route. It never goes further than ``max`` from its
+route, steps aside as soon as what is in its way is ``onset`` away at its own pace (sooner for what
+comes the other way), keeps to the side it chose, and walks back to its route once past. A mover
+crossing its route is waited for; between two crossing, the one that reaches the crossing point
+first goes first. Leaving and rejoining the route are events (``sidestep``, ``sidestep_back``), with
+the offset. The ``walker`` output declares ``{max: 1.0, onset: 2.2, back: 4.85, clearance: 0.24}``
+(m); other movers keep to their route and stand.
+
+.. code-block:: yaml
+
+   avoidance:
+     steer: none
+     stop: true
+     sidestep: {max: 1.0, onset: 2.2, back: 4.85, clearance: 0.24}
+
 ``reroute`` is the opt-in that changes that: it remembers where it was stopped as a disc that
 expires, and plans around it. The memory is what makes it work -- the grid is static, so a mover that
 merely re-planned would return the same path and drive into the same obstacle for ever. It is

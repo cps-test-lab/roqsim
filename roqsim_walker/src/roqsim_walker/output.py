@@ -38,7 +38,10 @@ WALKER_UPDATE_HZ = 60.0
 #: body wide, 0.46 m, so a walker abreast at a person's spacing is beside it and not in its way; it
 #: looks 3 s ahead, slows no harder than 1.0 m/s², stands 0.30 m short of something standing or
 #: moving along its way and 0.85 m short of a mover crossing ahead, waits 0.39 s once the way has
-#: cleared and walks off with a 0.54 s time constant. ``roqsim_nav``'s navigator documents each key.
+#: cleared and walks off with a 0.54 s time constant; on its route, it steps aside round what stands
+#: in its way from 2.2 m before it, up to 1.0 m from its route and 0.24 m clear of it, and is back
+#: on its route 4.85 m after.
+#: ``roqsim_nav``'s navigator documents each key.
 WALKER_AVOIDANCE = MappingProxyType(
     {
         "width": 0.46,
@@ -48,6 +51,7 @@ WALKER_AVOIDANCE = MappingProxyType(
         "wait_gap": 0.85,
         "clear_time": 0.39,
         "tau": 0.54,
+        "sidestep": MappingProxyType({"max": 1.0, "onset": 2.2, "back": 4.85, "clearance": 0.24}),
     }
 )
 
