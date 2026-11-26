@@ -939,7 +939,15 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    moving bodies alone (``CameraSpec.bodies``: ``moving``), whose build takes MuJoCo's dynamic
    category only -- the bodies :func:`~roqsim.rendering.moving_bodies` marks, with no static geom, no
    floor and no decoration -- which is what a renderer bringing its own static world composites by
-   depth. The pictures are those a
+   depth. A *posed* camera (:meth:`RenderService.view_at <roqsim.rendering.RenderService.view_at>`)
+   has no camera of the model: its scene is built through the default free camera, and then both
+   GL cameras of the scene are written from the request's pose and intrinsics
+   (:func:`~roqsim.rendering.posed_gl_camera`, the frustum's edges on the image's outer edges, so
+   ``cx, cy`` count from the top-left pixel's centre) and its clip planes, before
+   ``mjv_makeLights``, so the headlight follows the view; everything else -- the geom groups, the
+   shadows of see-through geoms, the depth and label passes -- is a model camera's. Its picture is
+   that of a model camera at the same pose with the same ``sensorsize``, ``focal`` and
+   ``principal``, pixel for pixel (``roqsim/tests/test_render_posed.py``). The pictures are those a
    ``mujoco.Renderer`` per camera drew (``roqsim/tests/test_render_service_pixels.py``). Under
    MuJoCo's default 4x MSAA a frame is not bit-reproducible on every GPU, with or without the service:
    a run may differ from another in a handful of values by one level; a model with
