@@ -22,7 +22,7 @@ from roqsim import render_filament
 from roqsim.registry import resolve_renderer
 from roqsim.render_api import RenderError
 from roqsim.render_filament import FilamentRenderer, headlight, linear_depth
-from roqsim.rendering import FrameRenderer, RenderService
+from roqsim.rendering import FrameRenderer, RenderService, camera_intrinsics
 
 
 def _vulkan() -> str | None:
@@ -502,3 +502,36 @@ def test_a_machine_without_vulkan_is_named_not_aborted():
     )
     assert run.returncode == 0, run.stderr[-2000:]
     assert "refused: filament: Filament could not open a headless Vulkan context" in run.stdout
+
+
+@needs_vulkan
+def test_a_posed_camera_is_drawn_as_the_model_camera_at_its_pose(scene):
+    """A camera with no camera of the model, at the 'offset' camera's pose with its intrinsics: the
+    same labels and depth as that camera, its principal point and non-square pixels included."""
+    model, data = scene
+    cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "offset")
+    quat = np.zeros(4)
+    mujoco.mju_mat2Quat(quat, data.cam_xmat[cam])
+    service = RenderService(
+        model, renderer="filament", renderers={"filament": {"post_processing": False}}
+    )
+    images = ("depth", "segmentation")
+    ref = service.view("ref", camera=cam, width=320, height=200, images=images)
+    posed = service.view_at(
+        "posed",
+        width=320,
+        height=200,
+        intrinsics=camera_intrinsics(model, cam, 320, 200, float(model.cam_fovy[cam])),
+        pos=data.cam_xpos[cam],
+        quat=quat,
+        images=images,
+    )
+    try:
+        a, b = service.render_now([(ref, images), (posed, images)], data)
+    finally:
+        service.close()
+    agree = (a.segmentation == b.segmentation).all(-1).mean()
+    assert agree > 0.999, f"labels agree on {agree:.4f} of the pixels"
+    finite = np.isfinite(a.depth) & np.isfinite(b.depth)
+    assert finite.mean() > 0.5
+    np.testing.assert_allclose(b.depth[finite], a.depth[finite], rtol=1e-4)

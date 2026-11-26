@@ -970,7 +970,8 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    labels a geom of zero alpha, so what presence hides at run time is taken out of the scene by the
    renderer itself, and the renderables are made again when something hidden when they were made
    is shown. A flex and a spatial tendon are drawn as parts, each labelled as its object. Depth is
-   reversed-Z, linearised in closed form; labels are the renderables' own ``segmentation_id``, mapped back to ``(object, mjtObj)``. With post-processing on, Filament's
+   reversed-Z, linearised in closed form; a posed camera is the ``mjrf.Camera`` of the GL camera
+   :func:`~roqsim.rendering.posed_gl_camera` writes, between the request's planes or the model's; labels are the renderables' own ``segmentation_id``, mapped back to ``(object, mjtObj)``. With post-processing on, Filament's
    dithering and ambient occlusion change from frame to frame, so it declares itself deterministic
    only with ``post_processing: false`` (``capabilities_for``).
 -  **Clip planes.** MuJoCo derives every camera's clip planes from the model, ``visual/map znear``/``zfar`` times its extent, so in a large world the near plane stands tens of centimetres out. A sensor camera draws instead between its ``render_near`` (a physical distance, default 0.01 m) and the model's own far plane, so what it sees does not depend on the world's size: the renderer sets those planes on the GL cameras of its own scene after the camera's view is set and linearises its depth reads with them, and the model, the viewer, an export and every other camera keep theirs. Every pass of a camera -- colour, depth, registered depth, labels -- is drawn with its planes. What a depth camera senses is separate: ``clip_near``/``clip_far`` mask the rendered depth to "no return" afterwards, so a surface nearer than ``clip_near`` is drawn, hides what is behind it and reads "no return"; ``render_near`` must not exceed ``clip_near``.
