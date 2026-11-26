@@ -890,7 +890,10 @@ class NavigatorPlugin(Plugin):
                 # still an agent the others give way to, but it walks the legs it was given
                 wanted = preferred
 
-        if self._caution.check(ctx, self._state.pos, 0.0, wanted, self._path_ahead()):
+        steering = self._avoid is not None and self._yields and not self._core.exact
+        if self._caution.check(
+            ctx, self._state.pos, 0.0, wanted, self._path_ahead(), steering=steering
+        ):
             # Hold: do NOT advance along the path. Whether the progress clock is rebased with it
             # depends on what is in the way. Traffic will move, so waiting for it must never look
             # like being stuck -- that is what would turn "wait for the robot to pass" into "back up

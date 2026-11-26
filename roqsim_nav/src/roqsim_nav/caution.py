@@ -329,12 +329,14 @@ class CautionProbe:
         """Whether this block should still be read as traffic rather than as an obstacle."""
         return self.blocked_for(now) < self.yield_time
 
-    def check(self, ctx, origin_xy, z: float, pref_vel, path=None) -> bool:
+    def check(self, ctx, origin_xy, z: float, pref_vel, path=None, steering=False) -> bool:
         """Whether the mover should hold still this tick.
 
         ``path`` is the route ahead as world xy points, the next first; the corridor is laid along
         it, and straight along ``pref_vel`` without one. The corridor reaches ``lookahead`` ahead,
-        or ``horizon`` seconds at the speed of ``pref_vel`` where that is further.
+        or ``horizon`` seconds at the speed of ``pref_vel`` where that is further -- but only
+        ``lookahead`` while a model is ``steering`` the mover: the model then deals with what is
+        further ahead, and the probe is the last resort for what steering has not cleared.
 
         Without ``decel``, returns ``True`` while something is in the corridor, and during the
         ``clear_time`` settle after it has left. With it, :attr:`limit` is the speed the gap ahead
@@ -358,7 +360,7 @@ class CautionProbe:
         heading = math.atan2(float(pref_vel[1]), float(pref_vel[0]))
         now = float(ctx.sim_time)
         graded = self.decel > 0.0
-        reach = max(self.lookahead, self.horizon * speed)
+        reach = self.lookahead if steering else max(self.lookahead, self.horizon * speed)
         # Without `decel`, what goes along the way as fast as the mover comes is left out of the
         # corridor; with it, it is followed (`_grade`).
         gap, points, things = self._ahead(
@@ -366,7 +368,7 @@ class CautionProbe:
         )
         self.limit = None
         if graded:
-            gap, points, hold = self._grade(things, speed)
+            gap, points, hold = self._grade(things, speed, steering)
         else:
             hold = gap is not None
         self.gap = gap
@@ -427,7 +429,7 @@ class CautionProbe:
                 self._radius = max(self._radius, d + float(model.geom_rbound[g]))
         return self._radius
 
-    def _grade(self, things, speed: float):
+    def _grade(self, things, speed: float, steering: bool = False):
         """``(gap, points, hold)`` for a speed that follows the gap ahead, and :attr:`limit`.
 
         A thing crossing the corridor that will have left it before the mover gets there is passed
@@ -436,7 +438,10 @@ class CautionProbe:
         does not stand for what walks away from it -- a walker beside it in a group, whose hip
         reaches into its corridor as they go, holds it up not at all. The rest are each stood short
         of, at ``wait_gap`` for one crossing and ``stop_gap`` for one standing or coming the other
-        way, and the speed each allows is that of a stop there at ``decel``.
+        way, and the speed each allows is that of a stop there at ``decel``. While a model steers
+        the mover, a mover crossing is the model's to go round, and the probe stands only
+        ``stop_gap`` short of it, as of anything else; and it does not hold the mover for a thing
+        that already reaches into its body, which the model is steering it away from.
         """
         half = self.width / 2.0
         gap, points, hold, limit = None, [], False, None
@@ -460,8 +465,12 @@ class CautionProbe:
                     gap = t["dist"]
                 points.extend(t["points"])
                 continue
-            stand = self.wait_gap if crossing else self.stop_gap
+            stand = self.wait_gap if crossing and not steering else self.stop_gap
             allows = math.sqrt(2.0 * self.decel * max(0.0, t["dist"] - stand))
+            if steering and t["dist"] <= 0.0:
+                # Already reaching into the body while a model steers it away: holding it still
+                # would only let the thing drive on into it.
+                continue
             if t["dist"] <= stand + _TOUCH:
                 hold = True
             limit = allows if limit is None else min(limit, allows)
