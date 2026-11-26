@@ -29,6 +29,9 @@ places its capture in ``sim.renderers.splat.splat`` (``file``, ``pose``, ``scale
 - **Depth**: the splat's expected depth (gsplat ``ED``) along the view axis, in metres; a pixel
   whose Gaussians cover less than ``min_alpha`` reads ``inf``, no return.
 
+- **Posed cameras** (``RenderService.view_at``): drawn as every camera is, from the request's
+  pose and intrinsics; the moving bodies in them by MuJoCo's renderer, which draws a posed camera too.
+
 What it cannot give it refuses: no segmentation (a capture has no objects), no orthographic camera,
 no GPU. It never falls back to MuJoCo's renderer for the room.
 """
@@ -141,6 +144,7 @@ class SplatRenderer(Renderer):
         principal_point=True,
         non_square_pixels=True,
         moving_only=False,
+        posed=True,
     )
     SETTINGS = {
         "splat": Setting(
