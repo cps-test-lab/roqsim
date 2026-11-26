@@ -204,7 +204,12 @@ PLANNER_SCHEMA = {
 RECOVERY_SCHEMA = {
     "enabled": Field(bool, default=True, doc="back away and re-plan when wedged"),
     "stuck_time": Field(float, default=1.5, unit="s", doc="window progress is measured over"),
-    "stuck_eps": Field(float, default=0.10, unit="m", doc="less progress than this is stuck"),
+    "stuck_eps": Field(
+        float,
+        default=0.10,
+        unit="m",
+        doc="less progress than this is stuck; for a mover whose speed covers less: half of that",
+    ),
     "backup_time": Field(float, default=0.5, unit="s", doc="how long it backs away"),
     "backup_speed": Field(float, default=0.4, unit="m/s", doc="speed it backs away at"),
     "max_recovery": Field(int, default=4, doc="recoveries before it gives up on a goal"),

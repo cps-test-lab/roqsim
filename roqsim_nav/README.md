@@ -161,13 +161,21 @@ of what `wall_polygons` rasterizes, so a wall at a corner is never the probe's p
 mover is still on its path; a re-routing one has changed a trajectory the experiment may have been
 holding fixed, which is why stopping is the default and re-routing is asked for.
 
+A held mover sets off again only when the corridor it holds for is clear, filled in rather than
+sampled (`CautionProbe._sweep`): `width` across, from its body's front to the probe's reach, from
+the bottom of its body up (the floor, for a mover standing on it). The rays look at one height from
+the mover's circumscribed radius out, so a low robot base or a body beside the mover's front can
+stand in that corridor unseen by them.
+
 `reroute` remembers where it was stopped, as a disc that expires after `forget_after`, and plans
 around it. The memory is what makes it work at all: the grid is static, so a mover that only
 re-planned would compute the same path and drive into the same obstacle again. It is deliberately
 not a costmap — a handful of discs, stamped onto a copy of the raster at plan time and nowhere else.
 
 `recovery` is separate again, for a mover that is wedged rather than merely blocked: after
-`stuck_time` without progress it backs away from the blocker and re-plans. **Nothing in the
+`stuck_time` without progress it backs away from the blocker and re-plans. Progress is `stuck_eps`,
+or for a mover whose speed covers less than that in `stuck_time`, half what it does cover: a slow
+mover walking its route is not wedged, and one at speed 0 is never stuck. **Nothing in the
 navigator's path is random** — give_way, the probe, recovery and the planner are all deterministic
 functions of the world, and the only draw anywhere here is a walker's dwell at a waypoint. Two runs
 of the same world are identical to the bit. What an opponent's path is *not* independent of is the
