@@ -157,8 +157,10 @@ intrinsics, ``(fx, fy, cx, cy)`` in pixels as MuJoCo projects it (a model camera
 and ``focal``/``principal``, or the symmetric pinhole of its ``fovy``; none for an orthographic camera or a ``fovy`` of 0, which
 project through ``fovy``); a renderer declares whether it
 projects an off-centre principal point (``principal_point``) and non-square pixels
-(``non_square_pixels``), and a camera that needs what its renderer does not project is refused at
-load, or when a tool draws through it, rather than drawn wrong.
+(``non_square_pixels``), and whether it draws a *posed* camera (``posed``): one with no camera of
+the model behind it, drawn at the pose and intrinsics its request carries, as a views file states
+them. A camera that needs what its renderer does not project or draw is refused at load, or when a
+tool draws through it, rather than drawn wrong.
 
 A renderer that brings its own static world (a captured splat) and leaves the static geometry out
 (``draws_static=False``) can still give the robots MuJoCo's own pictures: it opens a

@@ -890,7 +890,8 @@ renderer, its settings, the two modes -- is :doc:`rendering`; this is how it wor
    can give is declared on its class (``RendererCapabilities``: images, camera models, whether it
    composes moving bodies, draws the static world, renders a batch at once, is deterministic, runs
    in-process, draws decorations, draws only the geom groups a camera names, projects an off-centre
-   principal point, projects non-square pixels, draws the moving bodies alone), and
+   principal point, projects non-square pixels, draws the moving bodies alone, draws a *posed* camera:
+   one with no camera of the model, drawn at the pose and intrinsics of its request), and
    :meth:`RenderService.check` holds every camera to it when the world loads: a camera a renderer
    cannot serve fails the load naming both, and nothing falls back to MuJoCo's renderer. Every frame
    a renderer returns is held to its request: its camera, its snapshot's sim time and step, and each
