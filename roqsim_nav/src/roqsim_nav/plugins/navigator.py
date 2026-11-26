@@ -418,6 +418,8 @@ class NavigatorPlugin(Plugin):
         self._yields = False
         self._configured_goals: list[tuple] = []
         self._commanded = False
+        #: ``(sim time, xy)`` of the last tick, for the velocity of a body whose pose is written.
+        self._last_pose: tuple[float, np.ndarray] | None = None
         self._pose_snapshot = (0.0, 0.0, 0.0)
         self._failure_logged = ""
 
@@ -740,6 +742,7 @@ class NavigatorPlugin(Plugin):
         x, y, yaw = self._output.pose(ctx)
         self._state.pos = np.array([x, y], dtype=float)
         self._state.yaw = yaw
+        self._last_pose = None
         self._state.waypoints[0] = (x, y)
         # Built again on the first tick, against this run's world.
         self._core.planner = None
@@ -1061,6 +1064,14 @@ class NavigatorPlugin(Plugin):
         """
         if self._bid < 0:
             return np.zeros(2)
+        if int(ctx.model.body_mocapid[self._bid]) >= 0:
+            # A body whose pose is written has no velocity of its own in MuJoCo: its twist reads
+            # zero however fast it goes, so it is measured from where it has been instead.
+            now, pos = float(ctx.sim_time), np.asarray(self._state.pos, dtype=float).copy()
+            last, self._last_pose = self._last_pose, (now, pos)
+            if last is None or now - last[0] <= 0.0:
+                return np.zeros(2)
+            return (pos - last[1]) / (now - last[0])
         twist = body_twist(ctx.model, ctx.data, self._bid)
         return np.array([twist.linear[0], twist.linear[1]], dtype=float)
 
