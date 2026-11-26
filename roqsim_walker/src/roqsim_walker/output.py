@@ -17,6 +17,8 @@ The gait is what a viewer sees, so this output asks for a faster tick than plann
 
 from __future__ import annotations
 
+from types import MappingProxyType
+
 import numpy as np
 
 from roqsim_nav.outputs import NavOutput, OutputUnavailable
@@ -32,11 +34,18 @@ STATE_KEY = "walker:anim"
 WALKER_UPDATE_HZ = 60.0
 
 
+#: How a walker meets what is in its way, when its world does not say: its corridor is a person's
+#: body wide, 0.46 m, so a walker abreast at a person's spacing is beside it and not in its way.
+#: ``roqsim_nav``'s navigator documents each key.
+WALKER_AVOIDANCE = MappingProxyType({"width": 0.46})
+
+
 class WalkerOutput(NavOutput):
     """Moves a walker's nav root and animates its body to match."""
 
     kinematics = "holonomic"  # a person can step in any direction, including sideways
     update_hz = WALKER_UPDATE_HZ
+    avoidance_defaults = WALKER_AVOIDANCE
 
     def __init__(self, config: dict):
         super().__init__(config)

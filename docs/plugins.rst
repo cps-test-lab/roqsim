@@ -573,17 +573,30 @@ walker's legs as well as its pelvis. Holding is
 the default response, because a stopped mover is still on its path and resumes on the leg it was on,
 while a re-routing one has quietly changed a trajectory the experiment may have been holding fixed.
 
-A held mover sets off again only when the **corridor** it holds for is clear, which the rays alone
-cannot tell: they look at one height and start at the mover's circumscribed radius, so a robot whose
-base is below the scan plane, or one standing beside the mover's front, can be in its way while
-every ray reads clear. When the ``clear_time`` settle is over, the probe also checks the corridor
-filled in: ``width`` across, the same width it stops for, from the front of the mover's body to the
-end of the probe's reach, from the bottom of the body to its top (the floor, for a mover standing on
-it). While a collidable geom of anything that moves reaches into it, the mover holds and settles
-again, so it never sets off to pass something closer than it would have stopped for. What the mover
-holds by a weld moves with it and is not looked for. The check runs only to end a hold of the
-rays, so a mover they never held moves as it did; one held for a robot that drives across its way and on waits
-until the robot's body, not only what the rays see of it, has left the corridor.
+What is in the way is judged against the **corridor** the body is about to occupy, filled in and
+looked at every tick: ``width`` across, from the front of the mover's body to ``lookahead`` beyond
+it, from the bottom of the body to its top (the floor, for a mover standing on it), laid along the
+path ahead -- bent where the route turns, not straight along the heading, so a robot standing past a
+corner the mover turns at is not in its way. A thing that moves counts when any of its geoms,
+visual ones included, reaches up into the mover's own ``obstacle_height`` band: a robot's tower is
+part of the robot, and seeing the tower is seeing the whole robot, while a mat it walks over is not
+in its way. Where it is in the corridor is where its body is, its collidable geoms by their extent:
+a robot's base, a walker's legs and hips, not its arms. What is in the way is what reaches past
+the front of the body, along whichever side of the body it is going: a thing already inside the
+body that reaches past it is in the way at once, and one beside the body -- a walker abreast, a
+shoulder touching -- is not. Nor is what goes along the way at least 0.8 times as fast as the mover:
+walkers side by side, or one a step behind another, do not hold each other up. A thing's velocity
+is measured from where its root body has been over 0.3 s, so one whose pose is written has one.
+What the mover holds by a weld moves with it and is not looked for. The same corridor decides
+holding and setting off, so a mover
+never sets off to pass something closer than it would have stopped for; one held for a robot that
+drives across its way and on waits until the robot's body has left the corridor, and
+``clear_time`` after.
+
+An embodiment can declare ``avoidance:`` keys for what it moves (``NavOutput.avoidance_defaults``);
+a world's own key wins, and the navigator logs each value it takes from its output. The ``walker``
+output declares a corridor a person's body wide, ``width: 0.46``, so a walker abreast of another at
+a person's spacing is beside it, not in its way.
 
 ``reroute`` is the opt-in that changes that: it remembers where it was stopped as a disc that
 expires, and plans around it. The memory is what makes it work -- the grid is static, so a mover that
