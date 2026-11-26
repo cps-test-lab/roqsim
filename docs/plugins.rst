@@ -589,6 +589,31 @@ never sets off to pass something closer than it would have stopped for; one held
 drives across its way and on waits until the robot's body has left the corridor, and
 ``clear_time`` after.
 
+**How fast it meets it** is ``decel``. Without it (the default) a mover walks at its speed until
+something is within ``lookahead`` and then stands at once, as above. With it, the speed follows the
+gap ahead: the probe looks ``horizon`` seconds ahead at its speed (never less than ``lookahead``),
+and the mover slows on the stop that ``decel`` allows, to stand ``stop_gap`` short of what stands or
+moves along its way and ``wait_gap`` short of a mover crossing ahead. A mover crossing that will have
+left the corridor before it gets there is passed without slowing; a thing's velocity is measured
+from where it has been, so a robot whose pose a plugin writes has one too. Once the way has cleared
+and ``clear_time`` has passed, the speed rises to the set speed with the time constant ``tau``.
+
+.. code-block:: yaml
+
+   avoidance:
+     horizon: 3.0        # s: how far ahead it looks, at its speed (0: lookahead only)
+     decel: 1.0          # m/s^2: the speed follows the gap ahead (0: stands at once)
+     stop_gap: 0.3       # m: stands this short of what stands or moves along its way
+     wait_gap: 0.85      # m: ...and this short of a mover crossing ahead (default: stop_gap)
+     clear_time: 0.39    # s: the way stays clear this long before it walks off
+     tau: 0.54           # s: walking off, its speed rises with this time constant (0: at once)
+
+An embodiment can declare these for what it moves (``NavOutput.avoidance_defaults``): the ``walker``
+output declares the values above, and a corridor a person's body wide (``width: 0.46``) -- a walker
+abreast of it at a person's spacing is beside it, not in its way -- so a walker with ``stop: true``
+meets what is in its way at a person's pace without its world writing any of them. A world's own key wins, and the navigator logs
+each value it takes from its output.
+
 ``reroute`` is the opt-in that changes that: it remembers where it was stopped as a disc that
 expires, and plans around it. The memory is what makes it work -- the grid is static, so a mover that
 merely re-planned would return the same path and drive into the same obstacle for ever. It is

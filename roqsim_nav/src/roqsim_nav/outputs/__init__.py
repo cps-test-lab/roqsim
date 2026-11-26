@@ -14,7 +14,9 @@ without editing anything here. Nothing in ``roqsim_nav`` branches on an output's
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 
@@ -46,6 +48,12 @@ class NavOutput(ABC):
     #: (``kinematics``, ``heading_gain``, ``yaw_rate``, ...). A world that sets one this output does
     #: not read is refused at load, naming the output, rather than having it silently ignored.
     config_keys: tuple[str, ...] = ()
+
+    #: The ``avoidance:`` keys this embodiment sets for its mover when the world does not: how the
+    #: thing it moves meets what is in its way, declared by the embodiment rather than listed by
+    #: the navigator, so nothing branches on what a mover is. A world's own key wins; the navigator
+    #: logs each value it takes from here.
+    avoidance_defaults: Mapping[str, object] = MappingProxyType({})
 
     def __init__(self, config: dict):
         self.config = config or {}

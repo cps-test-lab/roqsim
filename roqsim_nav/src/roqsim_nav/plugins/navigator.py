@@ -163,6 +163,27 @@ TRACKERS = ("waypoint", "pure_pursuit")
 _PROBE_FIELDS = {
     "lookahead": Field(float, default=1.2, unit="m", doc="clear corridor needed, from the front"),
     "width": Field(float, default=0.6, unit="m", doc="corridor ahead: the body plus its clearance"),
+    "horizon": Field(
+        float, default=0.0, unit="s", doc="reach: max(lookahead, horizon x speed); 0: lookahead"
+    ),
+    "decel": Field(
+        float, default=0.0, unit="m/s^2", doc="speed follows the gap ahead; 0: hold at once"
+    ),
+    "stop_gap": Field(
+        float,
+        default=0.3,
+        unit="m",
+        doc="with decel: stands this short of what stands or goes along",
+    ),
+    "wait_gap": Field(
+        float,
+        default=None,
+        unit="m",
+        doc="with decel: short of a mover crossing; default: stop_gap",
+    ),
+    "tau": Field(
+        float, default=0.0, unit="s", doc="after a hold, speed rises with this; 0: at once"
+    ),
     "clear_time": Field(float, default=0.5, unit="s", doc="the way stays open this long to go on"),
     "yield_time": Field(
         float, default=3.0, unit="s", doc="a blockage is traffic this long before recovery may run"
@@ -420,6 +441,10 @@ class NavigatorPlugin(Plugin):
         self._commanded = False
         #: ``(sim time, xy)`` of the last tick, for the velocity of a body whose pose is written.
         self._last_pose: tuple[float, np.ndarray] | None = None
+        #: The speed the probe's pace has reached (m/s), or ``None`` while nothing paces it.
+        self._paced_speed: float | None = None
+        #: The ``avoidance:`` keys this mover took from its output, as logged at configure.
+        self.avoidance_defaults_taken: dict = {}
         self._pose_snapshot = (0.0, 0.0, 0.0)
         self._failure_logged = ""
 
@@ -581,7 +606,21 @@ class NavigatorPlugin(Plugin):
             ),
         )
 
-        avoid = cfg.get("avoidance") or {}
+        avoid = dict(cfg.get("avoidance") or {})
+        # What the embodiment declares for how its mover meets what is in its way, where the world
+        # says nothing: a world's own key wins, and each value taken is logged, so the choice the
+        # default made is never hidden.
+        declared = dict(getattr(self._output, "avoidance_defaults", None) or {})
+        taken = {k: v for k, v in declared.items() if k not in avoid}
+        if taken:
+            logger.info(
+                "navigator %s: avoidance from its %s output: %s",
+                self.entity,
+                type(self._output).__name__,
+                ", ".join(f"{k}={v}" for k, v in sorted(taken.items())),
+            )
+        avoid = {**taken, **avoid}
+        self.avoidance_defaults_taken = taken
         # `avoidance.steer` names the model that gives way for this mover, or 'none' to never
         # deviate. There is no world-level entry to declare: the model appears when a mover asks to
         # be steered, and the first to ask fixes it for the world.
@@ -859,9 +898,33 @@ class NavigatorPlugin(Plugin):
             # embodiment that is watched can settle -- a walker stands rather than freezing
             # mid-stride -- and turns toward the way it will leave.
             self._output.hold(ctx, step_dt, wanted)
+            self._paced_speed = 0.0
             return
 
-        self._output.emit(ctx, wanted, yaw, step_dt)
+        self._output.emit(ctx, self._paced(wanted, step_dt), yaw, step_dt)
+
+    def _paced(self, wanted, dt: float):
+        """``wanted`` at the speed the way ahead allows (``avoidance.decel``) and, after a hold,
+        rising to it with ``avoidance.tau``. Unchanged for a mover that sets neither."""
+        probe = self._caution
+        if not probe.enabled or (probe.decel <= 0.0 and probe.tau <= 0.0):
+            return wanted
+        speed = float(np.hypot(wanted[0], wanted[1]))
+        if speed < 1e-9:
+            # Standing at a goal, or with nowhere to go: not a hold, so it walks off as it would.
+            self._paced_speed = None
+            return wanted
+        target = speed if probe.limit is None else min(speed, probe.limit)
+        now = self._paced_speed
+        if now is None or target <= now:
+            # Slowing follows the stop the gap ahead allows, which is already at `decel`.
+            now = target
+        elif probe.tau > 0.0:
+            now += (target - now) * (1.0 - float(np.exp(-dt / probe.tau)))
+        else:
+            now = target
+        self._paced_speed = now
+        return np.asarray(wanted, dtype=float) * (now / speed)
 
     def _path_ahead(self):
         """The route ahead as world xy points, the next first, for the probe to lay its corridor

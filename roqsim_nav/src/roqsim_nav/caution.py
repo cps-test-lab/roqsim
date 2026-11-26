@@ -65,6 +65,11 @@ from .control import STOPPED
 _TUNING = (
     "lookahead",
     "width",
+    "horizon",
+    "decel",
+    "stop_gap",
+    "wait_gap",
+    "tau",
     "clear_time",
     "yield_time",
     "forget_after",
@@ -86,6 +91,13 @@ _MAX_LEGS = 4
 
 #: Where across the corridor, as fractions of its half width, a thing in it reports points.
 _ACROSS = np.linspace(-1.0, 1.0, 5)
+
+#: Slower than this across the corridor, a thing in it is standing or moving along it, not crossing.
+_CROSSING = 0.1
+
+#: How far back a thing's velocity is measured: its own parts move as it walks (a walker's legs),
+#: and a velocity taken over one tick would read a stride as a dash.
+_VELOCITY_WINDOW = 0.3
 
 
 def subtree_geoms(model, body_id: int) -> set[int]:
@@ -133,6 +145,25 @@ class CautionProbe:
         band = cfg.get("band") or (0.1, 1.8)
         self.band = (float(band[0]), float(band[1]))
         self.clear_time = float(cfg.get("clear_time", 0.5))
+        #: How far ahead it looks, in seconds at its speed: the reach is ``max(lookahead, horizon x
+        #: speed)``. 0 keeps the reach at ``lookahead``.
+        self.horizon = float(cfg.get("horizon", 0.0))
+        #: The speed follows the gap ahead, slowing no harder than this (m/s²). 0 holds at once for
+        #: whatever is within the reach, and walks at full speed otherwise.
+        self.decel = float(cfg.get("decel", 0.0))
+        #: With ``decel``: the gap at which it stands behind something standing or moving along its
+        #: way, and short of a mover crossing ahead (``wait_gap``, default ``stop_gap``).
+        stop_gap = cfg.get("stop_gap")
+        self.stop_gap = 0.3 if stop_gap is None else float(stop_gap)
+        wait_gap = cfg.get("wait_gap")
+        self.wait_gap = self.stop_gap if wait_gap is None else float(wait_gap)
+        #: Setting off after a hold, the speed rises to the set speed with this time constant (s).
+        #: Read by the navigator, which paces the speed.
+        self.tau = float(cfg.get("tau", 0.0))
+        #: With ``decel``: the speed the gap ahead allows this tick (m/s), or ``None`` for any.
+        self.limit: float | None = None
+        #: Where each thing that moves was, for its velocity: thing -> [(t, xy), ...].
+        self._track: dict[int, list] = {}
         #: How long a blockage is treated as traffic that will clear. While the mover is inside
         #: this window it holds AND its progress clock is rebased, so waiting for a robot to pass
         #: never talks it into a recovery. Past it, the blockage is treated as something that is not
@@ -165,6 +196,8 @@ class CautionProbe:
         self._others: np.ndarray | None = None
         self._owner: np.ndarray | None = None
         self._entity_of: dict[int, int] = {}
+        #: The root body of each thing, where its velocity is measured.
+        self._owner_body: dict[int, int] = {}
         #: How far the mover's body reaches ahead of its centre, and its bottom and top: measured
         #: the first time it looks, and kept. A walker's front moves by a stride as it walks and
         #: stands, and a corridor that started where its foot happens to be would open and close as
@@ -199,7 +232,16 @@ class CautionProbe:
         for key in ("lookahead", "width", "blockage_radius"):
             if key in numbers and numbers[key] <= 0:
                 errors.append(f"'avoidance.{key}' must be > 0")
-        for key in ("clear_time", "forget_after", "yield_time"):
+        for key in (
+            "clear_time",
+            "forget_after",
+            "yield_time",
+            "horizon",
+            "decel",
+            "stop_gap",
+            "wait_gap",
+            "tau",
+        ):
             if key in numbers and numbers[key] < 0:
                 errors.append(f"'avoidance.{key}' must be >= 0")
         return errors
@@ -243,10 +285,12 @@ class CautionProbe:
         # Which thing each geom belongs to: a walker's limbs are roots of their own, and are one
         # walker for what counts as in the way.
         self._entity_of = {}
+        self._owner_body = {}
         for k, other in enumerate(ctx.entities.all()):
             if other.body:
                 for g in entity_geoms(model, other, strict=False):
                     self._entity_of.setdefault(int(g), k)
+                self._owner_body[k] = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, other.body)
         self._others = None
         self._resolved = True
 
@@ -256,6 +300,8 @@ class CautionProbe:
         self._was_blocked = False
         self.blocked = False
         self.gap = None
+        self.limit = None
+        self._track = {}
         self.blocker_xy = None
         self.blocker_points = []
 
@@ -271,8 +317,13 @@ class CautionProbe:
         """Whether the mover should hold still this tick.
 
         ``path`` is the route ahead as world xy points, the next first; the corridor is laid along
-        it, and straight along ``pref_vel`` without one. Returns ``True`` while something is in
-        the corridor, and during the ``clear_time`` settle after it has left.
+        it, and straight along ``pref_vel`` without one. The corridor reaches ``lookahead`` ahead,
+        or ``horizon`` seconds at the speed of ``pref_vel`` where that is further.
+
+        Without ``decel``, returns ``True`` while something is in the corridor, and during the
+        ``clear_time`` settle after it has left. With it, :attr:`limit` is the speed the gap ahead
+        allows, and it returns ``True`` only once the gap is down to ``stop_gap`` (``wait_gap`` for
+        a mover crossing ahead), and during the settle after that.
         """
         if not self.enabled:
             return False
@@ -283,15 +334,23 @@ class CautionProbe:
             self._clear_since = None
             self._blocked_since = None
             self.gap = None
+            self.limit = None
             self.blocker_xy = None
             self.blocker_points = []
             return False
 
         heading = math.atan2(float(pref_vel[1]), float(pref_vel[0]))
-        gap, points = self._ahead(ctx, origin_xy, heading, path, self.lookahead)
-        self.gap = gap
         now = float(ctx.sim_time)
-        if gap is not None:
+        graded = self.decel > 0.0
+        reach = max(self.lookahead, self.horizon * speed)
+        gap, points, things = self._ahead(ctx, origin_xy, heading, path, reach, now)
+        self.limit = None
+        if graded:
+            gap, points, hold = self._grade(things, speed)
+        else:
+            hold = gap is not None and gap < self.lookahead
+        self.gap = gap
+        if hold:
             self._clear_since = None
             if self._blocked_since is None:
                 self._blocked_since = now
@@ -302,8 +361,14 @@ class CautionProbe:
                 points, key=lambda p: float(np.linalg.norm(p - np.asarray(origin_xy)))
             )
             return True
-        self.blocker_xy = None
-        self.blocker_points = []
+        if not graded:
+            points = []
+        self.blocker_points = points
+        self.blocker_xy = (
+            min(points, key=lambda p: float(np.linalg.norm(p - np.asarray(origin_xy))))
+            if points
+            else None
+        )
         if not self._was_blocked:
             # Never blocked, so there is nothing to settle after, on this tick or any other until
             # it is. Without this a mover holds for `clear_time` at the start of every run -- the
@@ -315,6 +380,8 @@ class CautionProbe:
         if self._clear_since is None:
             self._clear_since = now
         self.blocked = (now - self._clear_since) < self.clear_time
+        if self.blocked:
+            self.limit = 0.0
         if not self.blocked:
             # Only once the way is open AND has stayed open: a clear tick during the settle is not
             # the same as being through, and treating it as such re-arms the yield window on every
@@ -340,14 +407,69 @@ class CautionProbe:
                 self._radius = max(self._radius, d + float(model.geom_rbound[g]))
         return self._radius
 
-    def _ahead(self, ctx, origin_xy, heading: float, path, reach: float):
-        """``(gap, points)``: what lies in the corridor ahead, within ``reach`` of the front.
+    def _grade(self, things, speed: float):
+        """``(gap, points, hold)`` for a speed that follows the gap ahead, and :attr:`limit`.
+
+        A thing crossing the corridor that will have left it before the mover gets there is passed
+        without slowing. One moving along the way is followed: it allows its own speed and that of a
+        stop at ``decel`` in the gap left short of ``stop_gap``, and it never holds the mover, which
+        does not stand for what walks away from it -- a walker beside it in a group, whose hip
+        reaches into its corridor as they go, holds it up not at all. The rest are each stood short
+        of, at ``wait_gap`` for one crossing and ``stop_gap`` for one standing or coming the other
+        way, and the speed each allows is that of a stop there at ``decel``.
+        """
+        half = self.width / 2.0
+        gap, points, hold, limit = None, [], False, None
+        for t in things:
+            v_lat = t["v_lat"]
+            # Across its way, and more across it than half as fast along it: a walker going the same
+            # way sways a little from side to side and is not crossing.
+            crossing = abs(v_lat) > max(_CROSSING, 0.5 * abs(t["v_along"]))
+            if crossing and t["dist"] > 0.0:
+                # It has left when its trailing edge is past the far side of the corridor.
+                out = (half - t["lat_lo"]) / v_lat if v_lat > 0 else (t["lat_hi"] + half) / -v_lat
+                if out < t["dist"] / max(speed, 1e-6):
+                    continue
+            v_along = t["v_along"]
+            if not crossing and v_along > _CROSSING:
+                allows = v_along + math.sqrt(2.0 * self.decel * max(0.0, t["dist"] - self.stop_gap))
+                if allows >= speed:
+                    continue
+                limit = allows if limit is None else min(limit, allows)
+                if gap is None or t["dist"] < gap:
+                    gap = t["dist"]
+                points.extend(t["points"])
+                continue
+            stand = self.wait_gap if crossing else self.stop_gap
+            allows = math.sqrt(2.0 * self.decel * max(0.0, t["dist"] - stand))
+            if t["dist"] <= stand + _TOUCH:
+                hold = True
+            limit = allows if limit is None else min(limit, allows)
+            if gap is None or t["dist"] < gap:
+                gap = t["dist"]
+            points.extend(t["points"])
+        self.limit = limit
+        return gap, points, hold
+
+    def _velocity(self, owner: int, xy, now: float) -> np.ndarray:
+        """A thing's planar velocity, from where it was over the last :data:`_VELOCITY_WINDOW`."""
+        seen = self._track.setdefault(owner, [])
+        seen.append((now, np.array(xy, dtype=float)))  # a copy: `xy` may be a view of mjData
+        while len(seen) > 2 and now - seen[1][0] >= _VELOCITY_WINDOW:
+            seen.pop(0)
+        t0, p0 = seen[0]
+        return (seen[-1][1] - p0) / (now - t0) if now - t0 > 1e-6 else np.zeros(2)
+
+    def _ahead(self, ctx, origin_xy, heading: float, path, reach: float, now: float = 0.0):
+        """``(gap, points, things)``: what lies in the corridor ahead, within ``reach`` of the front.
 
         ``gap`` is the distance along the corridor from the mover's front to the nearest thing in
         it (0 for one already inside the body that reaches past its front), ``None`` when there is
         none; ``points``
         is the world xy where each geom found comes nearest the mover, and where it spans the
-        corridor at five points across it.
+        corridor at five points across it. ``things`` has one entry per thing found: its gap
+        (``dist``), its span across the corridor where it is nearest (``lat_lo``, ``lat_hi``), its
+        velocity across the corridor there and along it (``v_lat``, ``v_along``) and its points.
 
         The corridor is ``width`` across and spans the height of the mover's own body, from its
         bottom (the floor, for a mover standing on it) to its top. Its first leg runs from the
@@ -366,7 +488,7 @@ class CautionProbe:
             body = own
         others, owners = self._candidates(model)
         if body.size == 0 or others.size == 0:
-            return None, []
+            return None, [], []
         visible = raycast.VISIBLE_GROUPS[model.geom_group[others]] > 0
         others, owners = others[visible], owners[visible]
         held = _held_bodies(model, data, self._body)
@@ -374,7 +496,7 @@ class CautionProbe:
             keep = ~np.isin(model.geom_bodyid[others], list(held))
             others, owners = others[keep], owners[keep]
         if others.size == 0:
-            return None, []
+            return None, [], []
         start = np.array([float(origin_xy[0]), float(origin_xy[1])])
         floor = np.array([start[0], start[1], 0.0])
         half = self.width / 2.0
@@ -385,6 +507,14 @@ class CautionProbe:
         for o, top in zip(owners.tolist(), (wc[:, 2] + wr[:, 2]).tolist(), strict=True):
             tops[o] = max(tops.get(o, -np.inf), top)
         counts = np.array([tops[o] > self.band[0] + _TOUCH for o in owners.tolist()])
+        # Where each thing in the band is, every tick, for its velocity: where its root body is, not
+        # the middle of its geoms, which a walker's swinging arms move about.
+        velocity = {}
+        for o in set(owners[counts].tolist()):
+            velocity[o] = self._velocity(o, data.xpos[self._owner_body[o]][:2], now)
+        for o in list(self._track):
+            if o not in velocity:
+                del self._track[o]
         others, owners = others[counts], owners[counts]
         # Where a thing is in the corridor is where its body is, what can collide: a robot's base,
         # a walker's legs and hips, not its swinging arms. A thing nothing of which collides is
@@ -392,11 +522,11 @@ class CautionProbe:
         solid = (model.geom_contype[others] | model.geom_conaffinity[others]) > 0
         has_solid = {o for o, sd in zip(owners.tolist(), solid.tolist(), strict=True) if sd}
         keep = solid | ~np.isin(owners, list(has_solid))
-        others = others[keep]
+        others, owners = others[keep], owners[keep]
         if others.size == 0:
-            return None, []
+            return None, [], []
         legs = self._legs(start, heading, path)
-        best, points = None, []
+        best, points, things = None, [], {}
         covered = 0.0  # corridor length behind the leg being looked at, from the mover's front
         for k, (a, b) in enumerate(legs):
             d = b - a
@@ -434,14 +564,32 @@ class CautionProbe:
                 # `reroute` marks.
                 across = _ACROSS * half
                 span = across[(across >= c[i, 1] - r[i, 1]) & (across <= c[i, 1] + r[i, 1])]
-                for y in sorted({float(near[1]), *span.tolist()}):
-                    points.append(a + near[0] * axes[0, :2] + y * axes[1, :2])
+                mine = [
+                    a + near[0] * axes[0, :2] + y * axes[1, :2]
+                    for y in sorted({float(near[1]), *span.tolist()})
+                ]
+                points.extend(mine)
                 if best is None or dist < best:
                     best = dist
+                o = int(owners[i])
+                lat_lo, lat_hi = float(c[i, 1] - r[i, 1]), float(c[i, 1] + r[i, 1])
+                t = things.get(o)
+                if t is None or dist < t["dist"]:
+                    things[o] = {
+                        "dist": dist,
+                        "lat_lo": lat_lo if t is None else min(lat_lo, t["lat_lo"]),
+                        "lat_hi": lat_hi if t is None else max(lat_hi, t["lat_hi"]),
+                        "v_lat": float(velocity[o] @ axes[1, :2]),
+                        "v_along": float(velocity[o] @ axes[0, :2]),
+                        "points": mine + ([] if t is None else t["points"]),
+                    }
+                else:
+                    t["lat_lo"], t["lat_hi"] = min(lat_lo, t["lat_lo"]), max(lat_hi, t["lat_hi"])
+                    t["points"].extend(mine)
             covered += end - lo_x
             if covered >= reach - 1e-9:
                 break
-        return best, points
+        return best, points, list(things.values())
 
     def _legs(self, start, heading: float, path) -> list:
         """The legs of the corridor: from ``start`` along the path ahead, or along ``heading``."""
@@ -489,6 +637,8 @@ class CautionProbe:
                 ],
                 dtype=int,
             )
+            for g, o in zip(geoms, self._owner.tolist(), strict=True):
+                self._owner_body.setdefault(o, int(model.body_rootid[model.geom_bodyid[g]]))
         return self._others, self._owner
 
 
