@@ -910,3 +910,158 @@ def write_views(out_dir: str | Path, rendered: RenderedViews, extra: Mapping | N
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1, default=str) + "\n")
     return manifest
+
+
+# -- describing the conventions ------------------------------------------------------------------
+
+#: The units every views file is written in, whatever its convention.
+UNITS = (
+    "positions in metres, in the world frame of the target as built (after its components spawn)",
+    "fx, fy, cx, cy in pixels of the image written, at its width and height",
+    "x counts right from the image's left edge, y down from its top edge, under every convention",
+    "a quaternion list is w, x, y, z; a mapping {x, y, z, w} names its parts (ros: mapping only)",
+    "near and far are clip planes in metres; near defaults to 0.01, far to the model's own",
+)
+
+#: The example view: a 640x480 camera 2 m from the world's origin, 1 m up, looking along +x at it.
+_EXAMPLE = {"width": 640, "height": 480, "fx": 500.0, "fy": 500.0, "cx": 319.5, "cy": 239.5}
+_EXAMPLE_POSITION = [-2.0, 0.0, 1.0]
+#: Its axes in the world as columns, MuJoCo's camera frame: right -y, up +z, back -x.
+_EXAMPLE_C2W_MJ = np.array([[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+
+
+def _clean(values) -> list:
+    return [0.0 if abs(v) < 1e-12 else round(float(v), 6) for v in values]
+
+
+def example_file(preset: str) -> tuple[dict, str]:
+    """A ready views file of one view in *preset*'s own form: as data, and as commented YAML."""
+    if preset not in PRESETS:
+        raise ViewsError(_refuse_convention(preset))
+    conv = PRESETS[preset]
+    c2w = _EXAMPLE_C2W_MJ @ (np.diag([1.0, -1.0, -1.0]) if conv.axes == "opencv" else np.eye(3))
+    rot = c2w.T if conv.rotation == "world_to_camera" else c2w
+    shift = 0.5 if conv.pixel_origin == "corner" else 0.0
+    view: dict = {"name": "view_0001", **_EXAMPLE}
+    view["cx"], view["cy"] = _EXAMPLE["cx"] + shift, _EXAMPLE["cy"] + shift
+    axes_text = (
+        "x right, y down, z forward" if conv.axes == "opencv" else "x right, y up, looking down -z"
+    )
+    origin_text = (
+        "from the image's top-left corner (top-left pixel's centre: 0.5, 0.5)"
+        if conv.pixel_origin == "corner"
+        else "from the top-left pixel's centre (that centre: 0, 0)"
+    )
+    comments = {
+        "name": "unique; the file stem of its images: letters, digits, . _ -",
+        "width": "pixels",
+        "height": "pixels",
+        "fx": "focal length, pixels",
+        "fy": "focal length, pixels",
+        "cx": f"principal point, pixels, {origin_text}",
+        "cy": "principal point, pixels, counted as cx",
+    }
+    if preset == "ros":
+        q = _clean(_mat_to_quat(rot))
+        view["quat"] = {"x": q[1], "y": q[2], "z": q[3], "w": q[0]}
+        view["position"] = dict(zip("xyz", _EXAMPLE_POSITION, strict=True))
+        comments["quat"] = f"the camera's orientation in the world ({axes_text}), as ROS spells it"
+        comments["position"] = "the camera centre in the world, m"
+    elif preset == "mujoco":
+        view["quat"] = _clean(_mat_to_quat(rot))
+        view["position"] = list(_EXAMPLE_POSITION)
+        comments["quat"] = f"w, x, y, z: camera to world ({axes_text}); or R, its axes as columns"
+        comments["position"] = "the camera centre in the world, m"
+    else:
+        view["R"] = [_clean(row) for row in rot]
+        view["t"] = _clean(-rot @ np.asarray(_EXAMPLE_POSITION))
+        comments["R"] = f"world to camera, rows ({axes_text}); or quat: [w, x, y, z]"
+        comments["t"] = "x_cam = R x_world + t, m; or position: the camera centre in the world"
+    doc = {"convention": preset, "near": 0.05, "far": 50.0, "views": [view]}
+
+    def flow(value) -> str:
+        return json.dumps(value).replace('"', "")
+
+    head = [
+        f"# A views file for `roqsim render <target> --views FILE --out DIR`, convention {preset}:",
+        f"#   {conv.source}",
+        f"#   {conv.summary()}",
+        f"#   = axes: {conv.axes}, rotation: {conv.rotation}, pixel_origin: {conv.pixel_origin}",
+        "# The example view stands 2 m from the world's origin, 1 m up, looking along +x at it.",
+        "# Units: " + UNITS[0] + ".",
+    ]
+    rows = [
+        (f"convention: {preset}", f"a preset ({', '.join(PRESETS)}) or the three keys"),
+        ("near: 0.05", "optional: the near clip plane, m (default 0.01)"),
+        ("far: 50.0", "optional: the far clip plane, m (default: the model's own)"),
+        ("views:", "one entry per camera; add as many as you have"),
+    ]
+    first = True
+    for key, value in view.items():
+        text = f"{key}: {value}" if key == "name" else f"{key}: {flow(value)}"
+        rows.append((("  - " if first else "    ") + text, comments.get(key, "")))
+        first = False
+    width = max(len(r) for r, _ in rows) + 2
+    lines = head + [f"{r:<{width}}# {c}" if c else r for r, c in rows]
+    return doc, "\n".join(lines) + "\n"
+
+
+def describe_conventions(preset: str | None = None) -> dict:
+    """What ``roqsim views describe`` prints as JSON: the keys, the presets and the units, and with
+    a *preset* its example file as data and as text."""
+    out = {
+        "keys": KEYS,
+        "presets": {
+            name: {**c.keys(), "source": c.source, "summary": c.summary()}
+            for name, c in PRESETS.items()
+        },
+        "units": list(UNITS),
+        "describe": DESCRIBE,
+    }
+    if preset is not None:
+        doc, text = example_file(preset)
+        out["preset"] = preset
+        out["example"] = doc
+        out["example_text"] = text
+    return out
+
+
+def conventions_text() -> str:
+    """The keys, the units and the table of presets, as YAML comments."""
+    lines = ["# A views file names its convention: a preset, or the three keys.", "#"]
+    for key, values in KEYS.items():
+        lines.append(f"# {key}:")
+        lines += [f"#   {v:<16} {meaning}" for v, meaning in values.items()]
+    lines += ["#", "# presets (axes / rotation / pixel_origin):"]
+    width = max(len(n) for n in PRESETS)
+    for name, c in PRESETS.items():
+        lines.append(
+            f"#   {name:<{width}}  {c.axes} / {c.rotation} / {c.pixel_origin}  -- {c.source}"
+        )
+    lines += ["#", "# units:"] + [f"#   {u}" for u in UNITS]
+    lines.append(f"#\n# `{DESCRIBE}` prints a ready example file for that preset.")
+    return "\n".join(lines) + "\n"
+
+
+def presets_rst() -> list[str]:
+    """The table of presets as reStructuredText lines: what the docs' ``roqsim-view-presets``
+    directive inserts, so the docs show :data:`PRESETS` as installed."""
+    lines = [
+        ".. list-table::",
+        "   :header-rows: 1",
+        "",
+        "   * - preset",
+        "     - axes",
+        "     - rotation",
+        "     - pixel_origin",
+        "     - where the data comes from",
+    ]
+    for name, c in PRESETS.items():
+        lines += [
+            f"   * - ``{name}``",
+            f"     - ``{c.axes}``",
+            f"     - ``{c.rotation}``",
+            f"     - ``{c.pixel_origin}``",
+            f"     - {c.source}",
+        ]
+    return [*lines, ""]

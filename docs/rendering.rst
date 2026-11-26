@@ -138,6 +138,76 @@ On some GPUs MuJoCo's default 4x MSAA is not bit-reproducible from run to run (a
 one level); a world that needs identical bytes sets ``<visual><quality offsamples="0"/></visual>``
 in its model.
 
+.. _views-file:
+
+Drawing a list of views
+-----------------------
+
+A picture drawn where a real camera stood -- its pose, its focal lengths, a principal point off the
+image centre, its roll -- comes from a *views file*: a list of cameras, each a name, a size, ``fx fy
+cx cy`` in pixels and a pose. Every renderer that declares ``posed`` draws it.
+
+.. code-block:: yaml
+
+   convention: colmap        # a preset, or {axes: ..., rotation: ..., pixel_origin: ...}
+   near: 0.05                # optional, m; default 0.01
+   far: 30.0                 # optional, m; default the model's own far plane
+   views:
+     - name: "2_1276"        # unique; the file stem of its images
+       width: 353
+       height: 628
+       fx: 623.79
+       fy: 626.54
+       cx: 176.5
+       cy: 314.0
+       R: [[0.937, 0.344, 0.060], [0.127, -0.177, -0.976], [-0.325, 0.922, -0.209]]
+       position: [0.462, -2.131, 0.543]
+
+The file is JSON or YAML, read by its extension, and it names its convention: a preset, or all three
+keys. A file that names neither is refused, and so is an unknown preset, naming the presets, the
+keys and the command below; nothing is read with a default.
+
+``axes``
+   ``opencv``: the camera frame is x right, y down, z forward into the scene (also ROS's camera
+   optical frame). ``mujoco``: x right, y up, looking down -z (MuJoCo, OpenGL).
+``rotation``
+   ``world_to_camera``: ``x_cam = R (x_world - position)``; ``t`` may be given in place of
+   ``position``, ``x_cam = R x_world + t``. ``camera_to_world``: ``x_world = R x_cam + position``,
+   the columns of ``R`` being the camera's axes in the world.
+``pixel_origin``
+   ``corner``: ``cx, cy`` count from the image's top-left corner, so the top-left pixel's centre is
+   ``(0.5, 0.5)``. ``centre``: from the top-left pixel's centre, which is ``(0, 0)``.
+
+The presets name the sets the data comes in, after where it comes from:
+
+.. roqsim-view-presets::
+
+A calibration's ``rvec`` and ``tvec`` are the ``opencv`` preset with ``R = cv2.Rodrigues(rvec)[0]``
+and ``t = tvec``. Anything else is written as the keys: a camera-to-world pose in OpenGL's axes with
+its principal point counted from the pixel corner is ``{axes: mujoco, rotation: camera_to_world,
+pixel_origin: corner}``.
+
+Under every convention: positions are metres in the world frame of the target as built (after its
+components spawn); ``fx, fy, cx, cy`` are pixels of the image written, at its ``width`` and
+``height``; x counts right from the image's left edge and y down from its top edge. The rotation is
+exactly one of ``R`` (3x3 rows, orthonormal with determinant +1 to 1e-6) or ``quat``: a list is
+``w, x, y, z``, a mapping ``{x, y, z, w}`` names its parts as a ROS message does, and under ``ros``
+only the mapping is admitted, since a ROS list is ``x, y, z, w``. The camera's centre is
+``position``, a list or ``{x, y, z}``.
+
+Finding the conventions without the docs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``roqsim views describe`` prints the keys, the presets and the units; with a preset it also prints
+a ready example file in that preset's form, every key commented, which is a valid views file as it
+stands. ``--json`` gives the same as one document.
+
+.. code-block:: bash
+
+   roqsim views describe                   # the conventions, as comments
+   roqsim views describe colmap > v.yaml   # ...and an example file to fill in
+   roqsim views describe ros --json
+
 A renderer of your own
 ----------------------
 
