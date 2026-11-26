@@ -902,3 +902,62 @@ def test_after_a_hold_it_walks_off_with_tau(tmp_path):
         assert fast == pytest.approx(0.5 * np.log(10.0), abs=0.15)
     finally:
         engine.shutdown()
+
+
+# -- while a model steers the mover, the probe is the last resort ------------------------------------
+def _probe_with(tmp_path, xy):
+    """The cart's probe, with the low robot placed at ``xy`` relative to the cart, after one step."""
+    away = {"pose": {"position": {"x": 0.0, "y": 8.0, "z": 0.0}}}
+    engine = Engine(_held_world(tmp_path, LOW_ROBOT, blocker_spawn=away, avoidance=PACE))
+    engine.setup()
+    engine.reset()
+    engine.step()
+    _place(engine, _xy(engine) + np.asarray(xy))
+    engine.step()
+    return engine, _navigator(engine)._caution
+
+
+def test_steered_it_is_not_held_for_a_thing_that_reaches_into_its_body(tmp_path):
+    engine, probe = _probe_with(tmp_path, (0.15, 0.35))  # the base 0.1 m into the cart's flank
+    try:
+        cart = _xy(engine)
+        assert probe.check(engine.ctx, cart, 0.0, (0.8, 0.0), steering=False)
+        probe.reset()
+        assert not probe.check(engine.ctx, cart, 0.0, (0.8, 0.0), steering=True)
+    finally:
+        engine.shutdown()
+
+
+def test_steered_it_looks_only_lookahead_ahead(tmp_path):
+    """1.5 m ahead of the front: within the horizon at 0.8 m/s (2.4 m), past lookahead (1.0 m)."""
+    engine, probe = _probe_with(tmp_path, (0.25 + 0.2 + 1.5, 0.0))
+    try:
+        cart = _xy(engine)
+        probe.check(engine.ctx, cart, 0.0, (0.8, 0.0), steering=False)
+        assert probe.gap == pytest.approx(1.5, abs=0.02), "not steered, it saw nothing ahead"
+        probe.reset()
+        probe.check(engine.ctx, cart, 0.0, (0.8, 0.0), steering=True)
+        assert probe.gap is None and probe.limit is None, "steered, it looked past lookahead"
+    finally:
+        engine.shutdown()
+
+
+def test_steered_it_stands_stop_gap_short_of_a_mover_crossing_not_wait_gap(tmp_path):
+    engine, probe = _probe_with(tmp_path, (0.25 + 0.2 + 0.6, 0.0))  # 0.6 m ahead of the front
+    try:
+        things = [
+            {
+                "dist": 0.6,
+                "v_lat": -0.3,
+                "v_along": 0.0,
+                "lat_lo": -0.2,
+                "lat_hi": 0.2,
+                "points": [],
+            }
+        ]
+        _, _, held = probe._grade(things, 0.8)
+        assert held, "it does not wait for a mover crossing 0.6 m ahead"
+        _, _, held = probe._grade(things, 0.8, steering=True)
+        assert not held, "steered, it waits wait_gap short of a mover crossing"
+    finally:
+        engine.shutdown()

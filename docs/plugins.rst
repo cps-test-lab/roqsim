@@ -619,6 +619,13 @@ and ``clear_time`` has passed, the speed rises to the set speed with the time co
      clear_time: 0.39    # s: the way stays clear this long before it walks off
      tau: 0.54           # s: walking off, its speed rises with this time constant (0: at once)
 
+While a model steers the mover (``steer``), the probe looks only ``lookahead`` ahead, whatever
+``horizon`` says, and stands ``stop_gap`` short of a mover crossing as of anything else, not
+``wait_gap``, and never holds it for a thing already reaching into its body, which the model is
+steering it away from: the model deals with what is further and with who passes whom, and the probe
+is the last resort for what steering has not cleared, so it does not stop a pass the model has under
+way.
+
 An embodiment can declare these for what it moves (``NavOutput.avoidance_defaults``): the ``walker``
 output declares the values above, and a corridor a person's body wide (``width: 0.46``) -- a walker
 abreast of it at a person's spacing is beside it, not in its way -- so a walker with ``stop: true``
