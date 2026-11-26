@@ -515,14 +515,18 @@ def test_a_mover_does_not_wait_before_it_has_ever_been_blocked(tmp_path):
     Otherwise every mover holds for `clear_time` at the beginning of every run, having never
     met anything -- the timer starts from an unset value and reads as "the way only just cleared".
     """
-    engine = Engine(_world(tmp_path))  # nothing in the way at all
+    # nothing in the way at all, and a settle long enough to see
+    engine = Engine(_world(tmp_path, nav={"avoidance": {"lookahead": 1.0, "clear_time": 0.5}}))
     engine.setup()
     engine.reset()
     try:
         probe = _navigator(engine)._caution
+        start = _xy(engine)
         for _ in range(int(1.0 / engine.ctx.dt)):
             engine.step()
             assert not probe.blocked, "it held despite never having been blocked"
+        # 0.8 m/s for a second, less the first tick
+        assert _xy(engine)[0] - start[0] > 0.7, "it stood before it walked"
     finally:
         engine.shutdown()
 
@@ -741,5 +745,67 @@ def test_a_mover_the_rays_never_held_is_not_held_by_the_corridor(tmp_path):
         start = _xy(engine)
         _run(engine, 3.0)
         assert _xy(engine)[0] > start[0] + 1.0, "it held for a mat its rays never stopped it for"
+    finally:
+        engine.shutdown()
+
+
+def test_a_mover_held_once_walks_off_after_a_dwell_without_the_settle(tmp_path):
+    """Held on its first leg, then standing at a goal for a dwell with the way clear: it walks off
+    when the dwell is over, not `clear_time` later."""
+    blocker = _write(tmp_path, "blocker.xml", CRATE)
+    cart = _write(tmp_path, "crate.xml", CRATE)
+    nav = {
+        "speed": 0.8,
+        "goals": [[-1.0, 0.0], [4.0, 0.0]],
+        "dwell": [0.0, 2.0, 0.0],
+        "obstacle_height": [0.05, 0.6],
+        "recovery": {"enabled": False},
+        "avoidance": {"lookahead": 1.0, "clear_time": 0.5},
+    }
+    world = load_config_from_dict(
+        {
+            "sim": {"pacing": "asap", "world": _write(tmp_path, "corridor.xml", CORRIDOR)},
+            "components": [
+                {
+                    "spawn_model": {
+                        "model": cart,
+                        "motion": "driven",
+                        "pose": {"position": {"x": -4.0, "y": 0.0, "z": 0.25}},
+                    },
+                    "name": "cart",
+                    "components": [{"navigator": nav}],
+                },
+                {
+                    "spawn_model": {
+                        "model": blocker,
+                        "prefix": "b_",
+                        "motion": "driven",
+                        "pose": {"position": {"x": -2.4, "y": 0.0, "z": 0.25}},
+                    },
+                    "name": "blocker",
+                },
+            ],
+        },
+        base_dir=tmp_path,
+    )
+    engine = Engine(world)
+    engine.ctx.seed = 1  # a dwell draws its length, even a fixed one
+    engine.setup()
+    engine.reset()
+    try:
+        _run(engine, 2.0)
+        assert _navigator(engine)._caution.blocked, "the cart never held for the blocker"
+        _place(engine, (-2.4, 8.0))
+        # On to the goal at x = -1, its 2 s dwell, and off again: it stands at the goal for the
+        # dwell and nothing more. Standing is measured over 0.1 s, longer than a navigator tick.
+        stood, last = 0.0, _xy(engine)[0]
+        for _ in range(100):
+            _run(engine, 0.1)
+            x = _xy(engine)[0]
+            if -1.4 < x < -0.6 and abs(x - last) < 1e-6:
+                stood += 0.1
+            last = x
+        assert x > 0.0, "it never went on from the goal"
+        assert stood == pytest.approx(2.0, abs=0.15), f"it stood {stood:.2f} s at the goal"
     finally:
         engine.shutdown()

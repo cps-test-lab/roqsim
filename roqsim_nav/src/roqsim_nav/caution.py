@@ -256,6 +256,14 @@ class CautionProbe:
         self.blocker_xy = None
         self.blocker_points = []
 
+    def leg_ended(self) -> None:
+        """The mover stands with nowhere to go -- a dwell, a goal reached -- so what a hold left is
+        over: its next leg starts as a mover that was never held, with no settle. Called by its
+        navigator, which knows the difference between that and a tick an avoidance model leaves
+        without speed, which ends no hold."""
+        self._was_blocked = False
+        self._clear_since = None
+
     def blocked_for(self, now: float) -> float:
         """How long the way has been blocked without a break, in seconds. ``0.0`` when clear."""
         return 0.0 if self._blocked_since is None else max(0.0, float(now) - self._blocked_since)
@@ -299,14 +307,16 @@ class CautionProbe:
             return True
         self.blocker_xy = None
         self.blocker_points = []
-        if self._clear_since is None:
-            # Never blocked, so there is nothing to settle after. Without this a mover holds for
-            # `clear_time` at the start of every run -- the timer would start from a cold
-            # `None` and read as "the way only just cleared" when in fact it was never shut.
+        if not self._was_blocked:
+            # Never blocked, so there is nothing to settle after, on this tick or any other until
+            # it is. Without this a mover holds for `clear_time` at the start of every run -- the
+            # timer would start on its first tick and read as "the way only just cleared" from the
+            # second, when in fact it was never shut.
             self._clear_since = now
-            if not self._was_blocked:
-                self.blocked = False
-                return False
+            self.blocked = False
+            return False
+        if self._clear_since is None:
+            self._clear_since = now
         self.blocked = (now - self._clear_since) < self.clear_time
         if self._sweep_held or (self._ray_held and not self.blocked):
             # About to set off after the rays held it, or held for the corridor already: the rays

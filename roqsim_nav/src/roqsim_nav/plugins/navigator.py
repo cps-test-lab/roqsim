@@ -89,7 +89,7 @@ from ..avoidance import NO_AGENT, SERVICE_KEY, resolve_model, service_for
 from ..avoidance import available as avoidance_models
 from ..behavior import NavCore, NavParams, build_tree
 from ..caution import CautionProbe
-from ..control import LAWS
+from ..control import LAWS, STOPPED
 from ..grid import DEFAULT_RESOLUTION, build_grid, grid_key
 from ..handle import NavHandle, Sequencer
 from ..obstacles import holdable_roots
@@ -821,6 +821,9 @@ class NavigatorPlugin(Plugin):
             self._resume_configured_route()
 
         wanted = self._core.pref_vel
+        if float(np.hypot(wanted[0], wanted[1])) < STOPPED:
+            # Its own route asks for no speed: a dwell, or a goal reached.
+            self._caution.leg_ended()
         if self._avoid is not None:
             preferred = wanted
             entity = ctx.entities.get(self.entity)
