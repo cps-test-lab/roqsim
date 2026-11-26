@@ -32,13 +32,27 @@ _OBSTACLE_HORIZON = 2.0
 class OrcaModel(AvoidanceModel):
     """One rvo2 simulation for the world."""
 
-    params_schema = ("neighbor_dist", "time_horizon", "radius", "max_speed")
+    params_schema = (
+        "neighbor_dist",
+        "time_horizon",
+        "radius",
+        "max_speed",
+        "clearance",
+        "clearance_time",
+    )
 
     def __init__(self) -> None:
         self._sim = None
         self._dt = 0.002
         self._agents: dict[int, dict] = {}
         self._pending_static: list = []
+        #: The gap two agents keep passing (m), and how much more for each m/s they close at (s).
+        #: ORCA keeps discs apart, so each agent's disc is its radius plus half the clearance plus
+        #: ``clearance_time`` times its own speed: two agents keep ``clearance`` and
+        #: ``clearance_time`` times the sum of their speeds, which is their closing speed head-on
+        #: and past one standing.
+        self.clearance = 0.24
+        self.clearance_time = 0.06
 
     def configure(self, ctx, params: dict) -> None:
         try:
@@ -53,6 +67,8 @@ class OrcaModel(AvoidanceModel):
                 "the pure-Python model, or with `steer: none`."
             ) from exc
         self._dt = float(ctx.model.opt.timestep) if ctx.model is not None else self._dt
+        self.clearance = float(params.get("clearance", self.clearance))
+        self.clearance_time = float(params.get("clearance_time", self.clearance_time))
         self._sim = rvo2.PyRVOSimulator(
             self._dt,
             float(params.get("neighbor_dist", 4.0)),
@@ -84,7 +100,12 @@ class OrcaModel(AvoidanceModel):
             float(max_speed) if yields else 0.0,
             (0.0, 0.0),
         )
-        self._agents[aid] = {"key": key, "yields": bool(yields), "pref": np.zeros(2)}
+        self._agents[aid] = {
+            "key": key,
+            "yields": bool(yields),
+            "pref": np.zeros(2),
+            "radius": float(radius),
+        }
         return aid
 
     def add_static(self, polygons) -> None:
@@ -115,6 +136,10 @@ class OrcaModel(AvoidanceModel):
         # Position, every step: an agent must be where it really is, not where ORCA last integrated
         # it to.
         self._sim.setAgentPosition(aid, (float(pos[0]), float(pos[1])))
+        speed = float(np.hypot(vel[0], vel[1]))
+        self._sim.setAgentRadius(
+            aid, agent["radius"] + self.clearance / 2.0 + self.clearance_time * speed
+        )
         if not agent.get("yields", True):
             # Velocity too, but ONLY for an agent this model may not move -- the robot under test, a
             # scripted prop. For a yielding one it would be catastrophic and silent: `doStep` writes

@@ -9,7 +9,8 @@ What it does, per agent, per solve:
 
 * look at the other agents within ``neighbor_dist``;
 * for each, extrapolate the straight-line closest approach at the current velocities, and treat it
-  as a conflict when that approach falls inside both radii plus ``margin``, within ``horizon``
+  as a conflict when that approach falls inside both radii plus the clearance it keeps --
+  ``clearance``, and ``clearance_time`` more for each m/s the two close at -- within ``horizon``
   seconds;
 * alter course to one side, more strongly the sooner and the tighter the conflict.
 
@@ -23,11 +24,12 @@ omnidirectional base may strafe if it likes.
 
 Two properties are what make it work rather than merely move things about:
 
-**It picks a side by a rule, not by chance.** Both agents give way to their own right, so a head-on
-pair resolves into a pass rather than into the mirror-image dance two greedy avoiders fall into. The
-rule is the one road traffic and warehouse AGVs use, and it is the whole reason a symmetric encounter
-has an asymmetric outcome. ``side: left`` mirrors it for a left-hand-traffic world; every agent in a
-world must agree, which is why it is set once on the model rather than per agent.
+**It picks a side by the encounter, and by a rule where the encounter does not say.** A mover
+crossing its way is passed behind, on the side it comes from; one standing, or going the same way,
+is passed on the side away from it. Head-on, and for one standing on its line, both give way to
+their own right, so a head-on pair resolves into a pass rather than into the mirror-image dance two
+greedy avoiders fall into. ``side: left`` mirrors that rule for a left-hand-traffic world; every
+agent in a world must agree, which is why it is set once on the model rather than per agent.
 
 **It is deterministic.** No sampling, no state carried between solves, no iteration order
 dependence -- the same encounter replays identically, which is the point of an opponent.
@@ -48,11 +50,28 @@ from . import NO_AGENT, AvoidanceModel
 #: Below this the relative motion is too slow for a closest-approach time to mean anything.
 _STILL = 1e-6
 
+#: Slower than this, another agent is standing for the side it is passed on.
+_STANDING = 0.1
+
+#: How far from its line, beside its heading, a standing agent decides the side it is passed on;
+#: nearer, the rule (``side``) does.
+_ON_THE_LINE = 0.05
+
+#: The cosine past which another agent is coming the other way, head-on; between it and its negative
+#: it is crossing.
+_HEAD_ON = 0.7
+
 
 class GiveWayModel(AvoidanceModel):
     """Deterministic reciprocal give-way, in pure numpy."""
 
-    params_schema = ("neighbor_dist", "horizon", "margin", "strength", "side")
+    params_schema = ("neighbor_dist", "horizon", "clearance", "clearance_time", "strength", "side")
+
+    #: Parameters it once read, and what replaced each.
+    retired_params = {
+        "margin": "the gap it keeps is `clearance` (m), and `clearance_time` (s) more for each m/s "
+        "the two close at"
+    }
 
     def __init__(self) -> None:
         self._agents: dict[int, dict] = {}
@@ -60,14 +79,19 @@ class GiveWayModel(AvoidanceModel):
         self._next = 0
         self.neighbor_dist = 4.0
         self.horizon = 4.0
-        self.margin = 0.15
+        #: The gap it keeps between two discs passing (m), and how much more for each m/s they
+        #: close at (s).
+        self.clearance = 0.24
+        self.clearance_time = 0.06
         self.strength = 1.6
         self.side = "right"
+        self._excluded: dict[int, set[int]] = {}
 
     def configure(self, ctx, params: dict) -> None:
         self.neighbor_dist = float(params.get("neighbor_dist", self.neighbor_dist))
         self.horizon = float(params.get("horizon", self.horizon))
-        self.margin = float(params.get("margin", self.margin))
+        self.clearance = float(params.get("clearance", self.clearance))
+        self.clearance_time = float(params.get("clearance_time", self.clearance_time))
         self.strength = float(params.get("strength", self.strength))
         self.side = str(params.get("side", self.side))
         if self.side not in ("right", "left"):
@@ -116,8 +140,9 @@ class GiveWayModel(AvoidanceModel):
                 self._result[aid] = pref
                 continue
             push = np.zeros(2)
+            skip = self._excluded.get(aid, ())
             for other, they in self._agents.items():
-                if other == aid or not they["present"]:
+                if other == aid or not they["present"] or other in skip:
                     continue
                 push += self._avoid(me, they, pref)
             if not push.any():
@@ -151,18 +176,31 @@ class GiveWayModel(AvoidanceModel):
         if t_closest > self.horizon:
             return np.zeros(2)
         miss = float(np.linalg.norm(rel_p - rel_v * t_closest))
-        clearance = me["radius"] + they["radius"] + self.margin
+        clearance = (
+            me["radius"]
+            + they["radius"]
+            + self.clearance
+            + self.clearance_time * float(np.sqrt(speed_sq))
+        )
         if miss >= clearance:
             return np.zeros(2)
-        # Give way to our own right (or left), consistently: both sides of a head-on encounter then
-        # choose opposite directions in the world and the pair parts, where a "steer away from them"
-        # rule leaves them mirroring each other.
         heading = pref / float(np.linalg.norm(pref))
-        lateral = (
-            np.array([heading[1], -heading[0]])
-            if self.side == "right"
-            else np.array([-heading[1], heading[0]])
-        )
+        right = np.array([heading[1], -heading[0]])
+        rule = right if self.side == "right" else -right
+        their = they["vel"]
+        their_speed = float(np.linalg.norm(their))
+        if their_speed > _STANDING and float(heading @ their) / their_speed < -_HEAD_ON:
+            # Head-on: give way to our own right (or left), consistently, so both sides choose
+            # opposite directions in the world and the pair parts, where a "steer away from them"
+            # rule leaves them mirroring each other.
+            lateral = rule
+        elif their_speed > _STANDING and float(heading @ their) / their_speed < _HEAD_ON:
+            # Crossing: pass behind it, on the side it comes from.
+            lateral = -right if float(their @ right) > 0.0 else right
+        else:
+            # Standing, or going our way: pass on the side away from it, by the rule on its line.
+            off = float(rel_p @ right)
+            lateral = rule if abs(off) < _ON_THE_LINE else (-right if off > 0.0 else right)
         urgency = 1.0 - t_closest / self.horizon
         tightness = 1.0 - miss / clearance
         return lateral * (self.strength * urgency * tightness)
@@ -171,6 +209,9 @@ class GiveWayModel(AvoidanceModel):
         if aid == NO_AGENT:
             return self._agents.get(aid, {}).get("pref", np.zeros(2))
         return self._result.get(aid, self._agents[aid]["pref"])
+
+    def exclude(self, aid, other) -> None:
+        self._excluded.setdefault(aid, set()).add(other)
 
     def reset(self) -> None:
         self._result = {}
