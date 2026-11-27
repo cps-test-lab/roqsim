@@ -189,13 +189,39 @@ def test_two_walkers_head_on_beside_each_others_line_pass_on_the_side_they_are(t
         engine.shutdown()
 
 
-def test_two_walkers_crossing_take_turns_without_touching(tmp_path):
+#: Two reaching the crossing at nearly the same moment see each other only when one is inside the
+#: other's corridor, by then touching: a walker does not yet see a crosser coming.
+_UNSEEN_TIE = pytest.mark.xfail(
+    strict=True, reason="a crosser is seen only once it is inside the corridor"
+)
+
+
+@pytest.mark.parametrize(
+    ("dist", "speed"),
+    [
+        *[
+            (d, v)
+            for d in (2.6, 2.9, 3.0, 3.1, 3.4)
+            for v in (0.5, 1.0, 1.4)
+            if (d, v) not in {(3.0, 1.0), (3.0, 1.4), (3.1, 1.4)}
+        ],
+        pytest.param(3.0, 1.0, marks=_UNSEEN_TIE),
+        pytest.param(3.0, 1.4, marks=_UNSEEN_TIE),
+        pytest.param(3.1, 1.4, marks=_UNSEEN_TIE),
+    ],
+)
+def test_two_walkers_crossing_take_turns_without_touching(tmp_path, dist, speed):
+    """One walker 3 m from the crossing, the other ``dist`` from it on the crossing line, at one
+    speed: they pass one after the other without their bodies meeting, and both arrive."""
     engine = _engine(
         tmp_path,
-        [_walker("a", (-3.0, 0.0), (3.0, 0.0), 1.4), _walker("b", (0.0, -2.9), (0.0, 3.0), 1.4)],
+        [
+            _walker("a", (-3.0, 0.0), (3.0, 0.0), speed),
+            _walker("b", (0.0, -dist), (0.0, 3.0), speed),
+        ],
     )
     try:
-        least, a, b = _least_gap(engine, 9.0, "a", "b")
+        least, a, b = _least_gap(engine, 8.0 / speed + 4.0, "a", "b")
         assert least > 0.0, f"their bodies met, {-least * 100:.1f} cm into each other"
         assert np.linalg.norm(a - (3.0, 0.0)) < 0.3
         assert np.linalg.norm(b - (0.0, 3.0)) < 0.3

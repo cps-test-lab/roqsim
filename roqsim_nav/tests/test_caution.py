@@ -1164,6 +1164,20 @@ def _crosser(cart, ahead, left, speed=0.3):
     }
 
 
+def test_a_slow_crosser_is_taken_in_turn_not_stood_short_of(tmp_path):
+    """Drifting across its way at 0.07 m/s, it is still a crosser: the cart, at the crossing long
+    before it, walks on rather than standing short of it as of a thing standing."""
+    engine, probe = _probe_with(tmp_path, (0.0, 8.0))
+    try:
+        cart = _xy(engine)
+        _, _, held = probe._grade(
+            [_crosser(cart, 0.75, 0.35, speed=0.07)], 0.8, origin=cart, heading=0.0
+        )
+        assert not held and probe.limit is None, f"it slowed to {probe.limit} m/s for it"
+    finally:
+        engine.shutdown()
+
+
 def test_of_two_crossing_the_one_that_reaches_the_crossing_first_goes_first(tmp_path):
     """At 0.8 m/s, within wait_gap of a thing crossing at 0.3 m/s: the cart walks on where it reaches
     the crossing point well before the thing does, and waits where the thing gets there first;

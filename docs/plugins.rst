@@ -658,8 +658,8 @@ in its way is ``onset`` away at its own pace (sooner for what comes the other wa
 to its route once past. Someone coming the other way it passes on the side away from them, and on
 its right when they are on its line, so two meeting head-on step to opposite sides; once it has
 chosen a side it keeps to it, and takes the other only where nothing on its own is free. A mover
-crossing its route is waited for, as above. Leaving and rejoining the route are events
-(``sidestep``, ``sidestep_back``), with the offset. The ``walker`` output declares
+crossing its route is waited for, as above. Leaving and rejoining the route are events:
+``sidestep`` with where it leaves, ``sidestep_back`` with how far aside it was. The ``walker`` output declares
 ``{max: 1.0, onset: 2.2, back: 4.85, clearance: 0.24}`` (m), and ``sidestep: false`` keeps a walker
 on its route, standing before what is in it; a mover whose output declares none keeps to its route
 and stands.
