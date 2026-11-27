@@ -965,3 +965,42 @@ def test_steered_it_stands_stop_gap_short_of_a_mover_crossing_not_wait_gap(tmp_p
         assert not held, "steered, it waits wait_gap short of a mover crossing"
     finally:
         engine.shutdown()
+
+
+def _crosser(cart, ahead, left, speed=0.3):
+    """A thing ``ahead`` of the cart's centre and ``left`` of its line, crossing it toward the right."""
+    half = 0.2
+    return {
+        "dist": ahead - 0.45,  # from the cart's front
+        "v_lat": -speed,
+        "v_along": 0.0,
+        "lat_lo": left - half,
+        "lat_hi": left + half,
+        "points": [],
+        "xy": cart + (ahead, left),
+        "v": np.array([0.0, -speed]),
+    }
+
+
+def test_of_two_crossing_the_one_that_reaches_the_crossing_first_goes_first(tmp_path):
+    """At 0.8 m/s, within wait_gap of a thing crossing at 0.3 m/s: the cart walks on where it reaches
+    the crossing point well before the thing does, and waits where the thing gets there first;
+    within 0.1 s of each other, the one coming from the other's right goes first."""
+    engine, probe = _probe_with(tmp_path, (0.0, 8.0))
+    try:
+        cart = _xy(engine)
+        # it there at 0.94 s, the thing at 1.17 s
+        _, _, held = probe._grade([_crosser(cart, 0.75, 0.35)], 0.8, origin=cart, heading=0.0)
+        assert not held, "it waited for a thing it reaches the crossing well before"
+        # the thing there at 0.33 s
+        _, _, held = probe._grade([_crosser(cart, 0.75, 0.1)], 0.8, origin=cart, heading=0.0)
+        assert held, "it walked on in front of a thing that reaches the crossing first"
+        # a tie: it there at 1.2 s, the thing at 1.17 s
+        _, _, held = probe._grade([_crosser(cart, 0.96, 0.35)], 0.8, origin=cart, heading=0.0)
+        assert not held, "a tie with a thing on its left: it comes from the thing's right, and goes"
+        mirrored = _crosser(cart, 0.96, -0.35, speed=-0.3)
+        mirrored["lat_lo"], mirrored["lat_hi"] = -0.55, -0.15
+        _, _, held = probe._grade([mirrored], 0.8, origin=cart, heading=0.0)
+        assert held, "a tie with a thing on its right: the thing comes from its right, and goes"
+    finally:
+        engine.shutdown()
