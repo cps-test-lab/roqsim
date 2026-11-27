@@ -256,6 +256,14 @@ class CautionProbe:
         self.blocker_xy = None
         self.blocker_points = []
 
+    def leg_ended(self) -> None:
+        """The mover stands with nowhere to go -- a dwell, a goal reached -- so what a hold left is
+        over: its next leg starts as a mover that was never held, with no settle. Called by its
+        navigator, which knows the difference between that and a tick an avoidance model leaves
+        without speed, which ends no hold."""
+        self._was_blocked = False
+        self._clear_since = None
+
     def blocked_for(self, now: float) -> float:
         """How long the way has been blocked without a break, in seconds. ``0.0`` when clear."""
         return 0.0 if self._blocked_since is None else max(0.0, float(now) - self._blocked_since)
