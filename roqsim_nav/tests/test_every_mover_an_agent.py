@@ -8,6 +8,7 @@ crossing its way behind it, on the side it comes from; a mover's ``ignore`` appl
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import mujoco
@@ -232,3 +233,33 @@ def test_orca_grows_each_disc_by_half_the_clearance_and_clearance_time_times_its
     aid = model.add_agent("a", radius=0.23, max_speed=2.0, yields=True, params={})
     model.submit(aid, (0.0, 0.0), (1.2, 0.0), (1.2, 0.0))
     assert model._agents[aid]["disc"] == pytest.approx(0.23 + 0.12 + 0.1 * 1.2)
+
+
+#: The cart with a low bumper at its front, a body of its own below the cart's.
+BUMPERED = """<mujoco model="crate">
+  <worldbody><body name="crate"><geom name="g" type="box" size=".2 .2 .25"/>
+    <body name="nose" pos=".3 0 -.2"><geom name="n" type="box" size=".05 .1 .04"/></body>
+  </body></worldbody>
+</mujoco>"""
+
+
+def test_an_entity_nested_in_a_mover_is_not_an_agent_of_its_own(tmp_path, monkeypatch):
+    """A sensor on the cart, an entity of its own, rides inside the cart's disc: the cart does not
+    steer round its own part."""
+    from roqsim.context import Entity
+
+    monkeypatch.setattr(sys.modules[__name__], "CRATE", BUMPERED)
+    engine = Engine(_world(tmp_path, robot_at=(0.0, 8.0)))
+    engine.setup()
+    model = engine.ctx.model
+    nose = next(
+        model.body(i).name for i in range(model.nbody) if model.body(i).name.endswith("nose")
+    )
+    engine.ctx.entities.add(Entity(name="cart_bumper", kind="sensor", body=nose))
+    try:
+        engine.reset()
+        cart, _ = _track(engine, 10.0)
+        assert "cart_bumper" not in engine.ctx.blackboard.get(SERVICE_KEY)._passive
+        assert np.abs(cart[:, 1]).max() < 0.01, "it steered round its own part"
+    finally:
+        engine.shutdown()

@@ -217,9 +217,11 @@ class AvoidanceService:
         At the first solve of a run, once every navigator has joined in its ``on_reset``. What
         joins is a thing whose root body moves freely: a mocap body, or one with a free joint. A
         thing hinged or sliding on the world -- a door, a gate, a drawer -- moves only where it is
-        fixed, and the planner's walls and the probe deal with it. Each is a disc around its root
-        body, of the radius its geoms reach in the plane (its collidable ones, or every one where
-        none collides), each by its shape (:func:`_planar_radius`).
+        fixed, and the planner's walls and the probe deal with it. Only an entity whose body is
+        that root joins: one nested in another -- a sensor on a robot, an arm on a mobile base --
+        rides inside its carrier's disc. Each is a disc around its root body, of the radius its geoms
+        reach in the plane (its collidable ones, or every one where none collides), each by its
+        shape (:func:`_planar_radius`).
         """
         import mujoco  # noqa: PLC0415 - the module stays importable without a model
 
@@ -235,7 +237,7 @@ class AvoidanceService:
             if entity.name in self._aids or not entity.body:
                 continue
             bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
-            if bid < 0 or not _free_root(model, int(model.body_rootid[bid])):
+            if bid < 0 or int(model.body_rootid[bid]) != bid or not _free_root(model, bid):
                 continue
             geoms = entity_geoms(model, entity, strict=False)
             solid = [g for g in geoms if model.geom_contype[g] or model.geom_conaffinity[g]]

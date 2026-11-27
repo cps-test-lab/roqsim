@@ -77,9 +77,10 @@ absent. A mover's `ignore` applies to its steering as to its stopping, in both m
 keep `clearance` between two discs passing (0.24 m), and `clearance_time` more for each m/s they
 close at (0.06 s): `give_way` on the closing speed itself, `orca` by growing each disc by half the
 clearance and `clearance_time` times its own speed, so two keep `clearance_time` times the sum of
-their speeds -- their closing speed head-on and past one standing. A mover's disc is
-its `radius`, or the one its embodiment declares for avoidance (`NavOutput.agent_radius`: a walker's
-is a person's, 0.23 m), or its measured footprint.
+their speeds -- their closing speed head-on and past one standing. A mover's disc is the one its
+embodiment declares for avoidance (`NavOutput.agent_radius`: a walker's is a person's, 0.23 m,
+whatever `radius` it plans with), or else its `radius`, or its measured footprint. A passive agent
+is the disc its own body reaches; an entity nested in another rides inside its carrier's.
 
 `orca` is RVO2's solve (van den Berg et al., Apache-2.0), ported to Python with its walls; it needs
 nothing built. Without a model declared, everyone simply executes what they wanted.
