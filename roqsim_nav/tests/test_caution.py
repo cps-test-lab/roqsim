@@ -1145,6 +1145,36 @@ def test_a_navigator_whose_model_steers_it_gives_its_probe_only_lookahead(tmp_pa
         engine.shutdown()
 
 
+def test_a_route_given_to_a_held_mover_walks_off_as_a_fresh_one(tmp_path):
+    """A new route starts as one never held: the pace a hold left behind does not carry into it."""
+    pace = {**PACE, "tau": 0.5}
+
+    def first_half_second(engine):
+        start = _xy(engine)[0]
+        _run(engine, 0.5)
+        return _xy(engine)[0] - start
+
+    fresh = Engine(_held_world(tmp_path / "a", LOW_ROBOT, avoidance=pace))
+    fresh.setup()
+    fresh.reset()
+    try:
+        walked_fresh = first_half_second(fresh)
+    finally:
+        fresh.shutdown()
+    engine = Engine(_held_world(tmp_path / "b", LOW_ROBOT, avoidance=pace))
+    engine.setup()
+    engine.reset()
+    try:
+        _run(engine, 8.0)
+        assert _navigator(engine)._caution.blocked, "it was not held"
+        _place(engine, (0.0, 8.0))
+        _navigator(engine).send_goals([GOAL])
+        engine.step()  # the route is applied on the next tick
+        assert first_half_second(engine) == pytest.approx(walked_fresh, abs=0.02)
+    finally:
+        engine.shutdown()
+
+
 def _following(tmp_path, leader_speed):
     """The cart, and a second mover 0.3 m ahead of its front on the same line, going the same way."""
     world = _world(tmp_path, blocker=(START[0] + 0.8, START[1]))
