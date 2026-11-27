@@ -78,9 +78,10 @@ agent out of another's solve and refuses it by name. Both models keep `clearance
 passing (0.24 m), and `clearance_time` more for each m/s they close at (0.06 s): `give_way` on the
 closing speed itself, `orca` by growing each disc by half the clearance and `clearance_time` times its
 own speed, so two keep `clearance_time` times the sum of their speeds -- their closing speed head-on
-and past one standing. A mover's disc is
-its `radius`, or the one its embodiment declares for avoidance (`NavOutput.agent_radius`: a walker's
-is a person's, 0.23 m), or its measured footprint.
+and past one standing. A mover's disc is the one its embodiment declares for avoidance
+(`NavOutput.agent_radius`: a walker's is a person's, 0.23 m, whatever `radius` it plans with), or
+else its `radius`, or its measured footprint. A passive agent is the disc its own body reaches; an
+entity nested in another rides inside its carrier's.
 
 `orca` needs `rvo2`, built from source. An extra cannot express its build dependency, so the
 install is two commands: `pip install Cython`, then

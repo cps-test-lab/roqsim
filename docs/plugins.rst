@@ -564,10 +564,11 @@ a drawer), as a disc of its extent in the plane. A pass keeps ``clearance`` betw
 (``params: {clearance: 0.24}``, m) and ``clearance_time`` more for each m/s they close at (0.06 s):
 ``give_way`` on the closing speed itself, ``orca`` by growing each disc by half the clearance and
 ``clearance_time`` times its own speed, so two keep ``clearance_time`` times the sum of their speeds
--- their closing speed head-on and past one standing. A mover's disc is its ``radius``, or else the
-one its embodiment declares for avoidance (``NavOutput.agent_radius``: a walker's is a person's,
-0.23 m, narrower than its model's hips), or else its measured footprint; the planner's inflation is
-not changed by it. ``give_way`` passes a mover crossing its way behind it, on the side it comes
+-- their closing speed head-on and past one standing. A mover's disc is the one its embodiment
+declares for avoidance (``NavOutput.agent_radius``: a walker's is a person's, 0.23 m, narrower than
+its model's hips, whatever ``radius`` it plans with), or else its ``radius``, or else its measured
+footprint; the planner's inflation is not changed by it. Of the entities without a navigator, only
+one whose body is its tree's root joins: one nested in another rides inside its carrier's disc. ``give_way`` passes a mover crossing its way behind it, on the side it comes
 from, and one standing or going its way on the side away from it; head-on, and for one on its line,
 it gives way to its ``side`` (right by default). ``ignore`` applies to steering as to stopping;
 ``orca`` cannot leave one agent out of another's solve, and a world asking it to is refused.
