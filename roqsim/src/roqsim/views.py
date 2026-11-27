@@ -22,7 +22,7 @@ A *views file* (JSON or YAML) names its convention and lists its views::
     near: 0.05                # optional, m (default 0.01)
     far: 30.0                 # optional, m (default: the model's own far plane)
     views:
-      - {name: "2_1276", width: 353, height: 628, fx: 623.8, fy: 626.5, cx: 176.5, cy: 314.0,
+      - {name: "view_0001", width: 640, height: 480, fx: 600.0, fy: 600.0, cx: 320.0, cy: 240.0,
          R: [[...], [...], [...]], position: [x, y, z]}
 
 Three keys state a convention (:data:`KEYS`); a preset names a set of them after where its data comes
@@ -147,6 +147,10 @@ DEFAULT_NEAR = 0.01
 #: it is what is drawn.
 ROTATION_TOLERANCE = 1e-3
 
+#: A view's reading warns where drawing the nearest rotation moves the picture by more than this
+#: many pixels at its centre: its focal length times the angle its axes were turned by.
+ROTATION_SHIFT_WARNING = 0.1
+
 #: What a view's name may be: it becomes a file stem.
 _NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -233,6 +237,9 @@ class View:
     far: float | None = None
     #: The convention it was written in.
     convention: Convention | None = field(default=None, compare=False)
+    #: The largest angle (rad) between an axis of its ``R`` as written and the same axis of the
+    #: rotation drawn; ``None`` where the rotation was a quaternion.
+    rotation_turned: float | None = field(default=None, compare=False)
 
     @classmethod
     def from_pose(cls, convention: str | Mapping | Convention, **entry) -> View:
@@ -253,7 +260,8 @@ class View:
     def describe(self) -> dict:
         """How it was read, in the world frame: where it stands, which way it looks, what is up in
         its picture, and where its principal point lies; with ``text``, the same as one line, and
-        ``warnings`` for what a wrong convention typically produces."""
+        ``warnings`` for what a wrong convention typically produces and for an ``R`` whose nearest
+        rotation moves the picture (:data:`ROTATION_SHIFT_WARNING`)."""
         mat = self.rotation
         fwd, up = -mat[:, 2], mat[:, 1]
         zw = np.array([0.0, 0.0, 1.0])
@@ -282,6 +290,14 @@ class View:
             warnings.append("principal point outside the image")
         elif abs(dx) > self.width / 4 or abs(dy) > self.height / 4:
             warnings.append("principal point more than a quarter of the image from its centre")
+        turned = self.rotation_turned
+        shift = None if turned is None else turned * max(fx, fy)
+        if shift is not None and shift > ROTATION_SHIFT_WARNING:
+            warnings.append(
+                f"'R' is not exactly a rotation: the rotation nearest it is drawn, its axes up "
+                f"to {math.degrees(turned):.3f}° from those written, about {shift:.1f} px at "
+                f"this focal length"
+            )
         conv = self.convention
         label = conv.preset if conv and conv.preset else "keys" if conv else "roqsim"
         if abs(elevation) < 0.5:
@@ -318,6 +334,7 @@ class View:
             "up": [round(float(v), 6) for v in up],
             "roll_deg": None if roll is None else round(roll, 3),
             "principal_offset_px": {"right": round(dx, 3), "below": round(dy, 3)},
+            "rotation_turned_deg": None if turned is None else round(math.degrees(turned), 6),
             "warnings": warnings,
             "text": text,
         }
@@ -510,11 +527,13 @@ def _mat_to_quat(m: np.ndarray) -> np.ndarray:
     return q
 
 
-def _rotation(entry, conv: Convention, errors) -> np.ndarray | None:
+def _rotation(entry, conv: Convention, errors) -> tuple[np.ndarray | None, float | None]:
+    """The entry's rotation, and for an ``R`` the largest angle (rad) between an axis as written
+    and the same axis of the rotation returned."""
     has_r, has_q = "R" in entry, "quat" in entry
     if has_r == has_q:
         errors.append("give the rotation as exactly one of 'R' (3x3) or 'quat'")
-        return None
+        return None, None
     if has_r:
         r = entry["R"]
         try:
@@ -523,7 +542,7 @@ def _rotation(entry, conv: Convention, errors) -> np.ndarray | None:
             mat = None
         if mat is None or mat.shape != (3, 3) or not np.all(np.isfinite(mat)):
             errors.append(f"'R' is 3 rows of 3 numbers, got {r!r}")
-            return None
+            return None, None
         err = float(np.abs(mat @ mat.T - np.eye(3)).max())
         det = float(np.linalg.det(mat))
         if err > ROTATION_TOLERANCE or abs(det - 1.0) > ROTATION_TOLERANCE:
@@ -531,15 +550,17 @@ def _rotation(entry, conv: Convention, errors) -> np.ndarray | None:
                 f"'R' is not a rotation: R Rᵀ differs from I by {err:.2g}, det {det:.6g} "
                 f"(orthonormal, det +1, to {ROTATION_TOLERANCE:g})"
             )
-            return None
+            return None, None
         # The rotation nearest the matrix as written, to the digits it was written with.
         u, _, vt = np.linalg.svd(mat)
-        return u @ vt
+        nearest = u @ vt
+        sines = np.linalg.norm(np.cross(mat.T, nearest.T), axis=1)
+        return nearest, float(np.arctan2(sines, (mat * nearest).sum(axis=0)).max())
     q = entry["quat"]
     if isinstance(q, Mapping):
         quat = _vector(q, 4, "quat", errors, names=("x", "y", "z", "w"))
         if quat is None:
-            return None
+            return None, None
         quat = np.array([quat[3], quat[0], quat[1], quat[2]])
     else:
         if conv.preset == "ros":
@@ -547,15 +568,15 @@ def _rotation(entry, conv: Convention, errors) -> np.ndarray | None:
                 "'quat' under ros is the mapping {x, y, z, w}, as a ROS message spells it; a "
                 "list would be read as w, x, y, z, which a ROS list is not"
             )
-            return None
+            return None, None
         quat = _vector(q, 4, "quat", errors, names=("w", "x", "y", "z"))
         if quat is None:
-            return None
+            return None, None
     norm = float(np.linalg.norm(quat))
     if norm < 1e-9:
         errors.append("'quat' has no length")
-        return None
-    return _quat_to_mat(quat / norm)
+        return None, None
+    return _quat_to_mat(quat / norm), None
 
 
 def _view(entry: Mapping, conv: Convention, defaults: Mapping, errors: list[str]) -> View | None:
@@ -570,7 +591,7 @@ def _view(entry: Mapping, conv: Convention, defaults: Mapping, errors: list[str]
     fy = _number(entry, "fy", errors, positive=True)
     cx = _number(entry, "cx", errors)
     cy = _number(entry, "cy", errors)
-    rot = _rotation(entry, conv, errors)
+    rot, turned = _rotation(entry, conv, errors)
     has_pos, has_t = "position" in entry, "t" in entry
     position = None
     if has_t and conv.rotation != "world_to_camera":
@@ -611,6 +632,7 @@ def _view(entry: Mapping, conv: Convention, defaults: Mapping, errors: list[str]
         near=float(near),
         far=None if far is None else float(far),
         convention=conv,
+        rotation_turned=turned,
     )
 
 
