@@ -38,7 +38,8 @@ jobs:
           if [ "${{ github.event_name }}" = pull_request ]; then
             for other in $(gh pr list --repo "$REPO" --state open --limit 200 \
                 --json number,headRefOid --jq ".[] | select(.number != $NUMBER) | .headRefOid"); do
-              status=$(gh api "repos/$REPO/compare/$HEAD...$other" --jq .status)
+              # A compare that fails leaves this one checked in full rather than blocked.
+              status=$(gh api "repos/$REPO/compare/$HEAD...$other" --jq .status) || status=failed
               if [ "$status" = ahead ]; then
                 echo "$other, the head of another open pull request, contains this one"
                 full=false
@@ -88,8 +89,8 @@ jobs:
       # lint + test + smoke + check + doc. `make test` skips the ros2_ws suite when ROS is not
       # sourced, which is exactly right here -- the `ros` job below owns that half.
       # Below another pull request, lint and smoke: the one on top runs the rest over this tree too.
-      - name: make ${{ needs.stack.outputs.full == 'true' && matrix.target || 'lint smoke' }}
-        run: make ${{ needs.stack.outputs.full == 'true' && matrix.target || 'lint smoke' }}
+      - name: make ${{ (needs.stack.outputs.full == 'true' || matrix.target != 'ci') && matrix.target || 'lint smoke' }}
+        run: make ${{ (needs.stack.outputs.full == 'true' || matrix.target != 'ci') && matrix.target || 'lint smoke' }}
 
       # The site is the docs `make ci` just built, from the same run that linted, tested and
       # scrubbed this commit -- so a published page cannot come from a build that failed. The
