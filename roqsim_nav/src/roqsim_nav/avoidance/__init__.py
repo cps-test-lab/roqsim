@@ -43,6 +43,47 @@ NO_AGENT = -1
 FLOOR_BAND = 0.1
 
 
+def _free_root(model, root: int) -> bool:
+    """Whether the root body ``root`` moves freely: a mocap body, or one whose joint is free."""
+    import mujoco  # noqa: PLC0415
+
+    if root <= 0:
+        return False
+    if int(model.body_mocapid[root]) >= 0:
+        return True
+    first, count = int(model.body_jntadr[root]), int(model.body_jntnum[root])
+    return count > 0 and int(model.jnt_type[first]) == mujoco.mjtJoint.mjJNT_FREE
+
+
+def _planar_radius(model, data, geoms, centre) -> float:
+    """The radius around ``centre`` (xy) the plan view of ``geoms`` reaches: for each, its centre's
+    distance and its own reach in the plane -- a sphere's radius, a capsule's or a cylinder's radius
+    and the part of its half length that lies in the plane, a box's and any other shape's farthest
+    corner of its bounding box (``geom_aabb``) seen from above."""
+    import mujoco  # noqa: PLC0415
+
+    centre = np.asarray(centre, dtype=float)[:2]
+    best = 0.0
+    for g in geoms:
+        rot = data.geom_xmat[g].reshape(3, 3)
+        size = model.geom_size[g]
+        kind = int(model.geom_type[g])
+        if kind == mujoco.mjtGeom.mjGEOM_SPHERE:
+            at, reach = data.geom_xpos[g][:2], float(size[0])
+        elif kind in (mujoco.mjtGeom.mjGEOM_CAPSULE, mujoco.mjtGeom.mjGEOM_CYLINDER):
+            axis = rot[:2, 2]
+            at, reach = data.geom_xpos[g][:2], float(size[0] + size[1] * np.linalg.norm(axis))
+        else:
+            box = model.geom_aabb[g]
+            mid = data.geom_xpos[g] + rot @ box[:3]
+            corners = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
+            pts = mid[:2] + (corners * box[3:]) @ rot[:2, :].T
+            best = max(best, float(np.linalg.norm(pts - centre, axis=1).max()))
+            continue
+        best = max(best, float(np.linalg.norm(np.asarray(at) - centre)) + reach)
+    return best
+
+
 def _lowest(model, data, geoms) -> float:
     """How low the lowest of ``geoms`` reaches (m), each taken as its bounding sphere."""
     return min(float(data.geom_xpos[g][2]) - float(model.geom_rbound[g]) for g in geoms)
@@ -174,15 +215,16 @@ class AvoidanceService:
         """Join, as agents the others go round, the things that move and stand on the floor but
         have no navigator: a robot driven by its own stack, one standing still, a pushed cart.
 
-        At the first solve of a run, once every navigator has joined in its ``on_reset``. Each is
-        a disc around its root body, of the radius its geoms reach in the plane (its collidable
-        ones, or every one where none collides).
+        At the first solve of a run, once every navigator has joined in its ``on_reset``. What
+        joins is a thing whose root body moves freely: a mocap body, or one with a free joint. A
+        thing hinged or sliding on the world -- a door, a gate, a drawer -- moves only where it is
+        fixed, and the planner's walls and the probe deal with it. Each is a disc around its root
+        body, of the radius its geoms reach in the plane (its collidable ones, or every one where
+        none collides), each by its shape (:func:`_planar_radius`).
         """
         import mujoco  # noqa: PLC0415 - the module stays importable without a model
 
         from roqsim.presence import entity_geoms  # noqa: PLC0415
-
-        from ..caution import is_dynamic_body  # noqa: PLC0415 - avoids an import cycle
 
         self._joined_passive = True
         model, data = getattr(ctx, "model", None), getattr(ctx, "data", None)
@@ -194,7 +236,7 @@ class AvoidanceService:
             if entity.name in self._aids or not entity.body:
                 continue
             bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
-            if bid < 0 or not is_dynamic_body(model, bid):
+            if bid < 0 or not _free_root(model, int(model.body_rootid[bid])):
                 continue
             geoms = entity_geoms(model, entity, strict=False)
             solid = [g for g in geoms if model.geom_contype[g] or model.geom_conaffinity[g]]
@@ -203,11 +245,7 @@ class AvoidanceService:
                 continue
             if _lowest(model, data, geoms) > FLOOR_BAND:
                 continue
-            centre = data.xpos[bid][:2]
-            radius = max(
-                float(np.linalg.norm(data.geom_xpos[g][:2] - centre)) + float(model.geom_rbound[g])
-                for g in geoms
-            )
+            radius = _planar_radius(model, data, geoms, data.xpos[bid][:2])
             aid = self.model.add_agent(
                 entity.name, radius=radius, max_speed=0.0, yields=False, params={}
             )

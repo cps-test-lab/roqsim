@@ -17,7 +17,7 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.plugin import PluginError
-from roqsim_nav.avoidance import RegistryError
+from roqsim_nav.avoidance import SERVICE_KEY, RegistryError
 
 DATA = Path(__file__).parent / "data"
 
@@ -171,3 +171,74 @@ def test_orca_refuses_an_ignore_it_cannot_apply_to_steering(tmp_path):
                 engine.step()
     finally:
         engine.shutdown()
+
+
+#: A door 0.9 m wide on a vertical hinge at one end: it moves, but only where it is fixed.
+DOOR = """<mujoco model="door">
+  <worldbody><body name="leaf">
+    <joint name="hinge" type="hinge" axis="0 0 1" pos="-.45 0 0" damping="5"/>
+    <geom name="leaf" type="box" size=".45 .02 1" pos="0 0 1" mass="10"/>
+  </body></worldbody>
+</mujoco>"""
+
+#: A cart on a free joint, 0.6 m by 0.4 m in plan and 0.3 m high.
+CART = """<mujoco model="cart">
+  <worldbody><body name="cart">
+    <freejoint/>
+    <geom name="cart" type="box" size=".3 .2 .15" pos="0 0 .15" mass="20"/>
+  </body></worldbody>
+</mujoco>"""
+
+
+def _with(tmp_path, name, xml, at):
+    """The cart of :func:`_world` with no robot, and a body ``xml`` spawned at ``at``."""
+    world = _world(tmp_path, robot_at=(0.0, 8.0))
+    (tmp_path / f"{name}.xml").write_text(xml)
+    raw = world.raw
+    raw["components"].append(
+        {
+            "spawn_model": {
+                "model": str(tmp_path / f"{name}.xml"),
+                "prefix": f"{name}_",
+                "motion": "static",  # the model brings its own root joint
+                "pose": {"position": {"x": at[0], "y": at[1], "z": 0.0}},
+            },
+            "name": name,
+        }
+    )
+    return load_config_from_dict(raw, base_dir=tmp_path)
+
+
+def test_a_hinged_door_beside_the_way_is_not_steered_round(tmp_path):
+    """Open along the way, 0.4 m beside it: the planner and the probe deal with a door, and a disc
+    round it would push the mover a metre off its line."""
+    cart, _ = _run(_with(tmp_path, "door", DOOR, (0.0, 0.5)))
+    assert np.abs(cart[:, 1]).max() < 0.05, f"it swerved {np.abs(cart[:, 1]).max():.2f} m"
+
+
+def test_a_free_cart_joins_as_the_disc_of_its_plan_view(tmp_path):
+    engine = Engine(_with(tmp_path, "trolley", CART, (0.0, 3.0)))
+    engine.setup()
+    engine.reset()
+    try:
+        for _ in range(int(0.2 / engine.ctx.dt)):  # past the first solve
+            engine.step()
+        model = engine.ctx.blackboard.get(SERVICE_KEY).model
+        (agent,) = [a for a in model._agents.values() if a["key"] == "trolley"]
+        assert agent["radius"] == pytest.approx(np.hypot(0.3, 0.2), abs=0.005)
+    finally:
+        engine.shutdown()
+
+
+def test_orca_grows_each_disc_by_half_the_clearance_and_clearance_time_times_its_speed():
+    """Two agents keep `clearance` and `clearance_time` times the sum of their speeds."""
+    pytest.importorskip("rvo2")
+    from types import SimpleNamespace
+
+    from roqsim_nav.avoidance.orca import OrcaModel
+
+    model = OrcaModel()
+    model.configure(SimpleNamespace(model=None), {"clearance": 0.24, "clearance_time": 0.1})
+    aid = model.add_agent("a", radius=0.23, max_speed=2.0, yields=True, params={})
+    model.submit(aid, (0.0, 0.0), (1.2, 0.0), (1.2, 0.0))
+    assert model._sim.getAgentRadius(aid) == pytest.approx(0.23 + 0.12 + 0.1 * 1.2)

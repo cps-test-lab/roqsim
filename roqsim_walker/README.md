@@ -84,8 +84,8 @@ legs. A `floorplan` mesh adds its own walls the same way.
 `avoidance: {steer: give_way, stop: false}` on the walker's navigator gives it `roqsim_nav`'s default
 local model (pure Python, no extra): it steers round the robot and other walkers, and never stops for
 them. `stop: true` makes it look ahead and meet what is in its way at a person's pace: the walker
-output declares the probe's `width`, `horizon`, `decel`, `stop_gap`, `wait_gap`, `clear_time` and `tau`
-(`WALKER_AVOIDANCE`), which `roqsim_nav`'s docs describe; a world's own key wins. For ORCA, use
+output declares the probe's `width`, `horizon`, `decel`, `stop_gap`, `wait_gap`, `clear_time` and
+`tau` (`WALKER_AVOIDANCE`), which `roqsim_nav`'s docs describe; a world's own key wins. For ORCA, use
 `steer: orca` and install `rvo2` the way `roqsim_nav`'s README gives it.
 
 ### Goals at runtime
@@ -167,9 +167,9 @@ door handle:
 
 ```python
 handle.reach(left=left_point, right=right_point)  # re-set it every step as the points move
-handle.reach(right=right_point)  # one hand: the left goes back to the walk
-left, right = handle.hands()  # where the wrists are now
-handle.reach()  # let go with both
+handle.reach(right=right_point)                   # one hand: the left goes back to the walk
+left, right = handle.hands()                      # where the wrists are now
+handle.reach()                                    # let go with both
 ```
 
 Each point is three finite numbers (x, y, z, world); anything else raises `ValueError` at the
@@ -237,8 +237,8 @@ OpenSCENARIO); a move never decides what comes next.
 
 ```python
 worker = ctx.blackboard.get("humanoid:worker")
-seq = worker.grasp("both", "tote_1")  # = worker.start("grasp", hand="both", target="tote_1")
-status = worker.status()  # MachineStatus(seq, program, finished, error)
+seq = worker.grasp("both", "tote_1")             # = worker.start("grasp", hand="both", target="tote_1")
+status = worker.status()                         # MachineStatus(seq, program, finished, error)
 ```
 
 A target is a site or body of the model by name (`cabinet/drawer_0/grip`), an entity by its

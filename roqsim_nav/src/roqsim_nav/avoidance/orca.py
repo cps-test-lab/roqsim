@@ -138,7 +138,7 @@ class OrcaModel(AvoidanceModel):
         self._sim.setAgentPosition(aid, (float(pos[0]), float(pos[1])))
         speed = float(np.hypot(vel[0], vel[1]))
         self._sim.setAgentRadius(
-            aid, agent["radius"] + (self.clearance + self.clearance_time * speed) / 2.0
+            aid, agent["radius"] + self.clearance / 2.0 + self.clearance_time * speed
         )
         if not agent.get("yields", True):
             # Velocity too, but ONLY for an agent this model may not move -- the robot under test, a
