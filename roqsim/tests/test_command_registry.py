@@ -274,6 +274,7 @@ _STATES_ITS_EXIT_STATUS = {
     "catalog",
     "plugins",
     "renderers",
+    "views",
     "export gltf",
     "export urdf",
     "export srdf",

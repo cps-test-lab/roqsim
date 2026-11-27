@@ -109,7 +109,7 @@ class OrcaModel(AvoidanceModel):
         # have moved it.
         agent["pos"] = np.asarray(pos, dtype=float)[:2].copy()
         speed = float(np.hypot(vel[0], vel[1]))
-        agent["disc"] = agent["radius"] + (self.clearance + self.clearance_time * speed) / 2.0
+        agent["disc"] = agent["radius"] + self.clearance / 2.0 + self.clearance_time * speed
         if not agent["yields"]:
             # Velocity too, but ONLY for an agent this model may not move -- the robot under test, a
             # scripted prop. A yielding agent's velocity is the one its last solve chose, as ORCA

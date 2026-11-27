@@ -229,6 +229,7 @@ def test_a_camera_asking_for_segmentation_is_refused_at_load(tmp_path):
 
 def test_without_a_gpu_it_refuses_to_open_and_names_why(tmp_path, monkeypatch):
     import torch
+
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     renderer = SplatRenderer({"splat": {"file": "room.ply"}})
     model = mujoco.MjModel.from_xml_string(XML)
@@ -324,3 +325,29 @@ def test_faint_gaussians_are_dropped_at_load_when_asked(gpu, tmp_path):
             _draw(service, views, data)
     finally:
         service.close()
+
+
+def test_a_posed_camera_draws_the_room_and_a_moving_body_into_it(gpu, tmp_path):
+    """A camera with no camera of the model, at the model camera's pose with its intrinsics: the
+    crate in front of the wall is drawn into the capture, as through the model camera."""
+    pts, colours = _wall(3.0, [1.0, 0.0, 0.0])
+    service, (view,), model, data = _service(tmp_path, _write(tmp_path, pts, colours, sigma_m=0.04))
+    cam = model.camera("cam").id
+    quat = np.zeros(4)
+    mujoco.mju_mat2Quat(quat, data.cam_xmat[cam])
+    posed = service.view_at(
+        "posed",
+        width=128,
+        height=96,
+        intrinsics=view.spec.intrinsics,
+        pos=data.cam_xpos[cam],
+        quat=quat,
+        images=("rgb", "depth"),
+    )
+    try:
+        _move_crate(model, data, 1.5)
+        ref, got = _draw(service, [view, posed], data)
+    finally:
+        service.close()
+    assert got.depth[48, 64] == pytest.approx(1.3, abs=0.01)  # the crate, drawn by MuJoCo
+    assert np.abs(got.rgb.astype(int) - ref.rgb.astype(int)).max() <= 1

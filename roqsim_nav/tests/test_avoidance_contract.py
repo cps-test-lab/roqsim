@@ -315,3 +315,26 @@ def test_a_mover_whose_pose_is_written_submits_the_velocity_it_moves_at(tmp_path
         assert sub["vel"][0] > 0.45
     finally:
         engine.shutdown()
+
+
+def test_a_mover_placed_elsewhere_submits_no_jump_as_velocity(tmp_path):
+    """Moved 3 m between two ticks by something else, it is placed, not moving at 60 m/s."""
+    engine = Engine(_world(tmp_path, avoidance={"model": STUB}))
+    engine.setup()
+    engine.reset()
+    try:
+        for _ in range(int(1.0 / engine.ctx.dt)):
+            engine.step()
+        model, data = engine.ctx.model, engine.ctx.data
+        body = engine.ctx.entities.get("mover0").body
+        mid = int(model.body_mocapid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body)])
+        data.mocap_pos[mid][1] += 3.0
+        stub = engine.ctx.blackboard.get(SERVICE_KEY).model
+        fastest = 0.0
+        for _ in range(int(0.2 / engine.ctx.dt)):
+            engine.step()
+            (sub,) = stub.submissions.values()
+            fastest = max(fastest, float(np.linalg.norm(sub["vel"])))
+        assert fastest < 1.0, f"it submitted {fastest:.1f} m/s for being placed elsewhere"
+    finally:
+        engine.shutdown()
