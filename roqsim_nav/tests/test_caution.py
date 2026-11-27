@@ -1143,3 +1143,44 @@ def test_a_navigator_whose_model_steers_it_gives_its_probe_only_lookahead(tmp_pa
         )
     finally:
         engine.shutdown()
+
+
+def _following(tmp_path, leader_speed):
+    """The cart, and a second mover 0.3 m ahead of its front on the same line, going the same way."""
+    world = _world(tmp_path, blocker=(START[0] + 0.8, START[1]))
+    raw = world.raw
+    raw["components"][1]["components"] = [
+        {
+            "navigator": {
+                "speed": leader_speed,
+                "goals": [[GOAL[0] + 1.0, GOAL[1]]],
+                "obstacle_height": [0.05, 0.6],
+                "avoidance": {"stop": False},
+            }
+        }
+    ]
+    return load_config_from_dict(raw, base_dir=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("leader_speed", "held"), [(0.8, False), (0.3, True)], ids=["as-fast", "slower"]
+)
+def test_one_going_its_way_as_fast_does_not_hold_it_and_a_slower_one_does(
+    tmp_path, leader_speed, held
+):
+    """What goes along the way at least 0.8 times as fast as the mover is not in its way: a mover
+    following another at 0.3 m keeps walking; behind a slower one it stands until it is far enough
+    ahead."""
+    engine = Engine(_following(tmp_path, leader_speed))
+    engine.setup()
+    engine.reset()
+    try:
+        start = _xy(engine)
+        _run(engine, 1.5)
+        walked = float(np.linalg.norm(_xy(engine) - start))
+    finally:
+        engine.shutdown()
+    if held:
+        assert walked < 0.8 * 1.5 * 0.5, f"it walked {walked:.2f} m behind a slower one"
+    else:
+        assert walked > 0.8 * 1.5 * 0.8, f"it walked only {walked:.2f} m behind one as fast"
