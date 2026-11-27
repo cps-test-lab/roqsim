@@ -665,6 +665,52 @@ def set_camera_planes(cam: mujoco.MjvGLCamera, near: float | None, far: float | 
         cam.frustum_far = far
 
 
+def posed_gl_camera(
+    cam: mujoco.MjvGLCamera,
+    pos,
+    quat,
+    intrinsics: Sequence[float],
+    width: int,
+    height: int,
+    near: float,
+    far: float,
+) -> None:
+    """Point *cam* from *pos*/*quat* (``w, x, y, z``, MuJoCo's camera frame: looking down its -z,
+    +y up) through the pinhole *intrinsics* ``(fx, fy, cx, cy)`` of a ``width x height`` image,
+    between the planes *near* and *far* in metres.
+
+    ``cx, cy`` count from the top-left pixel's centre (:attr:`CameraSpec.intrinsics`); OpenGL
+    rasterises at pixel centres with the frustum's edges on the image's outer edges, so the frustum
+    reaches ``cx + 1/2`` pixels left of the optical axis and ``W - cx - 1/2`` right of it, and the
+    same down from the top. This is the frustum MuJoCo itself makes for a model camera with
+    ``sensorsize`` and ``focal``/``principal`` (``roqsim/tests/test_render_posed.py``).
+    """
+    fx, fy, cx, cy = (float(v) for v in intrinsics)
+    mat = np.zeros(9)
+    mujoco.mju_quat2Mat(mat, np.asarray(quat, dtype=float))
+    mat = mat.reshape(3, 3)
+    left, right = -near * (cx + 0.5) / fx, near * (width - cx - 0.5) / fx
+    top, bottom = near * (cy + 0.5) / fy, -near * (height - cy - 0.5) / fy
+    cam.pos[:] = np.asarray(pos, dtype=float)
+    cam.forward[:] = -mat[:, 2]
+    cam.up[:] = mat[:, 1]
+    cam.frustum_center = (left + right) / 2.0
+    cam.frustum_width = (right - left) / 2.0
+    cam.frustum_bottom = bottom
+    cam.frustum_top = top
+    cam.frustum_near = near
+    cam.frustum_far = far
+    cam.orthographic = 0
+
+
+def check_planes(near: float, far: float) -> None:
+    """Refuse clip planes a picture cannot be drawn between: *far* must be beyond *near* > 0."""
+    if not near > 0:
+        raise ValueError(f"near clip plane {near:g} m must be beyond the camera (> 0 m)")
+    if far <= near:
+        raise ValueError(f"far clip plane {far:g} m is not beyond the near one {near:g} m")
+
+
 def linear_depth(
     buffer: np.ndarray, near: float, far: float, orthographic: bool = False
 ) -> np.ndarray:
@@ -1004,6 +1050,7 @@ class MujocoRenderer(Renderer):
         non_square_pixels=True,
         moving_only=True,
         baked_lighting=True,
+        posed=True,
     )
     SETTINGS = {
         "atlas": Setting(
@@ -1032,6 +1079,8 @@ class MujocoRenderer(Renderer):
         self._atlas: _Atlas | None = None
         self._clear_geoms = False
         self._vopts: dict = {}
+        #: The free camera a posed request's scene is built through (_mjv_camera).
+        self._free: mujoco.MjvCamera | None = None
         #: Scene builds and draws since open (what a test counts).
         self.stats = {"scene_builds": 0, "draws": 0, "readbacks": 0, "batches": 0}
 
@@ -1154,6 +1203,12 @@ class MujocoRenderer(Renderer):
         cam = request.camera.mujoco_camera
         if isinstance(cam, mujoco.MjvCamera):
             return cam
+        if request.camera.posed:
+            # The scene is built through the default free camera; its view is the request's pose,
+            # written on the GL cameras afterwards (_set_view).
+            if self._free is None:
+                self._free = default_free_camera(self.model)
+            return self._free
         if cam is None:
             raise RenderError(
                 f"camera {request.id!r} names no MuJoCo camera; MuJoCo's renderer draws through one"
@@ -1185,11 +1240,29 @@ class MujocoRenderer(Renderer):
     def _set_view(self, model, data, request: CameraRequest) -> tuple[float, float, bool]:
         """Point the built scene at *request*'s camera: its view, its lights and its planes."""
         scene = self._scene
+        spec = request.camera
         mujoco.mjv_updateCamera(model, data, self._mjv_camera(request), scene)
+        if spec.posed:
+            # The request's pose and intrinsics, between its planes (the model's where it names
+            # none), on both GL cameras; then the lights, so the headlight follows this view.
+            near = spec.near if spec.near is not None else float(scene.camera[0].frustum_near)
+            far = spec.far if spec.far is not None else float(scene.camera[0].frustum_far)
+            check_planes(near, far)
+            for cam in scene.camera:
+                posed_gl_camera(
+                    cam,
+                    request.pos,
+                    request.quat,
+                    spec.intrinsics,
+                    spec.width,
+                    spec.height,
+                    near,
+                    far,
+                )
         # The headlight follows the camera, and mjv_makeLights reads the scene's camera.
         mujoco.mjv_makeLights(model, data, scene)
-        spec = request.camera
-        set_clip_planes(scene, spec.near, spec.far)
+        if not spec.posed:
+            set_clip_planes(scene, spec.near, spec.far)
         for cam in scene.camera:
             if cam.frustum_far <= cam.frustum_near:
                 raise ValueError(
@@ -1340,6 +1413,9 @@ class RenderView:
         self.shard = 0
         #: The views dealt together (:meth:`RenderService.view`): one camera's passes.
         self.group = spec.id
+        #: A posed view's pose, ``(pos, quat)`` in the world (``w, x, y, z``, MuJoCo's camera frame);
+        #: set between draws to move it (:meth:`RenderService.view_at`). ``None`` for any other view.
+        self.pose: tuple[np.ndarray, np.ndarray] | None = None
         self._frame: Frame | None = None
         self._fresh = False
 
@@ -1647,6 +1723,11 @@ class RenderService:
             max_geom=max_geom,
             bodies=bodies,
         )
+        return self._register(spec, renderer, wants, group)
+
+    def _register(self, spec: CameraSpec, renderer, wants, group) -> RenderView:
+        """Add *spec* as a view of *renderer* (the default one), dealt to an instance by *group*."""
+        id = spec.id
         view = RenderView(self, spec, renderer or self.default_renderer, wants)
         view.group = id if group is None else str(group)
         # Groups are dealt to the renderer's instances in turn: the shard is the service's choice,
@@ -1664,6 +1745,66 @@ class RenderService:
                 "camera in configure"
             )
         self.views.append(view)
+        return view
+
+    def view_at(
+        self,
+        id: str,
+        *,
+        width: int,
+        height: int,
+        intrinsics: Sequence[float],
+        pos,
+        quat,
+        near: float | None = None,
+        far: float | None = None,
+        images: Collection[str] = ("rgb",),
+        renderer: str | None = None,
+        geomgroup: Sequence[int] | None = None,
+        bodies: str = "all",
+        group: str | None = None,
+    ) -> RenderView:
+        """Register a posed view: a pinhole camera at *pos*/*quat* with *intrinsics*, no camera of
+        the model behind it (:attr:`~roqsim.render_api.CameraSpec.posed`).
+
+        *pos* is in metres in the world; *quat* is ``w, x, y, z`` in MuJoCo's camera frame (looking
+        down its -z, +y up); *intrinsics* are ``(fx, fy, cx, cy)`` in pixels with ``cx, cy`` counted
+        from the top-left pixel's centre. *near*/*far* are its clip planes in metres (``None``: the
+        model's). The pose may be changed between draws (:attr:`RenderView.pose`). It is drawn
+        only when asked (:meth:`render_now`); a renderer that does not declare ``posed`` is refused
+        by :meth:`check`, and when it is asked to draw it.
+        """
+        width, height = int(width), int(height)
+        if width < 1 or height < 1:
+            raise ValueError(f"view {id!r}: size {width}x{height}; at least 1x1 pixels")
+        fx, fy, cx, cy = (float(v) for v in intrinsics)
+        if not (fx > 0 and fy > 0) or not all(map(math.isfinite, (fx, fy, cx, cy))):
+            raise ValueError(f"view {id!r}: fx, fy must be finite and > 0, got {fx:g}, {fy:g}")
+        if near is not None and far is not None:
+            check_planes(float(near), float(far))
+        elif near is not None and not near > 0:
+            raise ValueError(f"view {id!r}: near clip plane {near:g} m must be > 0 m")
+        unknown = sorted(set(images) - set(IMAGES))
+        if unknown:
+            raise ValueError(f"view {id!r}: unknown image(s) {unknown}; one of {', '.join(IMAGES)}")
+        if bodies not in BODIES:
+            raise ValueError(f"view {id!r}: bodies {bodies!r}; one of {', '.join(BODIES)}")
+        spec = CameraSpec(
+            id=id,
+            width=width,
+            height=height,
+            model="pinhole",
+            fovy=math.degrees(2.0 * math.atan(0.5 * height / fy)),
+            intrinsics=(fx, fy, cx, cy),
+            near=None if near is None else float(near),
+            far=None if far is None else float(far),
+            images=frozenset(images),
+            mujoco_camera=None,
+            geomgroup=None if geomgroup is None else tuple(int(g) for g in geomgroup),
+            bodies=bodies,
+        )
+        view = self._register(spec, renderer, None, group)
+        view.pose = (np.asarray(pos, dtype=float).copy(), np.asarray(quat, dtype=float).copy())
         return view
 
     def _fovy(self, camera) -> float:
@@ -1816,7 +1957,10 @@ class RenderService:
 
     def request(self, view: RenderView, images, snapshot: StateSnapshot, decorate=None):
         """The :class:`~roqsim.render_api.CameraRequest` for *view* at *snapshot*."""
-        pos, quat = self._camera_pose(view.spec.mujoco_camera, snapshot.data)
+        if view.pose is not None:
+            pos, quat = (np.array(v, dtype=float) for v in view.pose)
+        else:
+            pos, quat = self._camera_pose(view.spec.mujoco_camera, snapshot.data)
         return CameraRequest(
             camera=view.spec,
             images=frozenset(images),
@@ -1870,8 +2014,25 @@ class RenderService:
         return len(due)
 
     def render_now(self, views: Sequence[tuple[RenderView, Collection[str]]], data, decorate=None):
-        """Draw *views* (each with the images asked for) from the state *data* holds, now."""
-        return self._render(list(views), data, decorate)
+        """Draw *views* (each with the images asked for) from the state *data* holds, now.
+
+        A posed view (:meth:`view_at`) is held to its renderer's capabilities first, as
+        :meth:`check` holds it at load: one its renderer cannot draw is refused with the reason, and
+        never drawn another way.
+        """
+        views = list(views)
+        for view, images in views:
+            if view.spec.posed:
+                caps = self.renderer_class(view.renderer).capabilities_for(
+                    self.settings.get(view.renderer, {})
+                )
+                missing = view.spec.missing_from(caps, images, decorate is not None)
+                if missing:
+                    raise RenderError(
+                        f"view {view.id!r}: renderer {view.renderer!r} cannot give "
+                        f"{', '.join(missing)}"
+                    )
+        return self._render(views, data, decorate)
 
     def _render(self, due, data, decorate=None, wait: bool = True) -> list[Frame]:
         """Draw *due* from *data*: here (``sync``), or by each renderer's worker (``async``).
