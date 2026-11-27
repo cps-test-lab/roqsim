@@ -60,6 +60,10 @@ class Stub:
             report["geomgroups"] = [r["geomgroup"] for r in header["requests"]]
             report["bodies_asked"] = [r["bodies"] for r in header["requests"]]
             report["request_intrinsics"] = {r["id"]: r["intrinsics"] for r in header["requests"]}
+            report["request_poses"] = {
+                r["id"]: {"posed": r["posed"], "pos": r["pos"], "quat": r["quat"]}
+                for r in header["requests"]
+            }
             with open(self.report, "w", encoding="utf-8") as f:
                 json.dump(report, f)
         frames, out = [], []
