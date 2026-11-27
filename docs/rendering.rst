@@ -160,7 +160,7 @@ cx cy`` in pixels and a pose. Every renderer that declares ``posed`` draws it.
        fy: 626.54
        cx: 176.5
        cy: 314.0
-       R: [[0.937, 0.344, 0.060], [0.127, -0.177, -0.976], [-0.325, 0.922, -0.209]]
+       R: [[1, 0, 0], [0, 0, -1], [0, 1, 0]]   # world to camera: looking along +y, level
        position: [0.462, -2.131, 0.543]
 
 The file is JSON or YAML, read by its extension, and it names its convention: a preset, or all three

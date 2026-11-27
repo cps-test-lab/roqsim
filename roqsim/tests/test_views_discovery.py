@@ -11,6 +11,8 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -30,6 +32,20 @@ def _roqsim(*args, cwd=None) -> subprocess.CompletedProcess:
         cwd=cwd,
         env={**os.environ, "MUJOCO_GL": os.environ.get("MUJOCO_GL", "egl")},
     )
+
+
+#: The docs' chapter on views files.
+_RENDERING_DOCS = Path(__file__).resolve().parents[2] / "docs" / "rendering.rst"
+
+
+def test_every_views_file_in_the_docs_is_one_roqsim_reads():
+    # A YAML block of the docs that names a convention is a views file a reader copies.
+    text = _RENDERING_DOCS.read_text()
+    blocks = re.findall(r"\.\. code-block:: yaml\n\n((?:   .*\n|\n)+)", text)
+    files = [yaml.safe_load(textwrap.dedent(b)) for b in blocks if "convention:" in b]
+    assert files
+    for doc in files:
+        assert len(V.parse_views(doc, where="docs/rendering.rst")) >= 1
 
 
 # -- (b) `roqsim views describe` -----------------------------------------------------------------
