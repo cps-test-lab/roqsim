@@ -67,14 +67,18 @@ batched model can compute every agent at once and the order plugins appear in a 
 needed ORCA, the interface would have been shaped around ORCA.
 
 **Who yields is derived, not configured.** An entity with a navigator that names a model is
-apparatus and gives way; one whose navigator steers by none, and every entity without a navigator
-that moves and stands on the floor (its lowest geom below 0.1 m: a robot driven by its own stack,
-one standing still, a pushed cart, not a tote on a table) joins as a non-yielding agent whose state
-is overwritten from ground truth every tick, its velocity measured from where it has been — so the
-others go round it and it is never pushed by them. One lifted off the floor while it is carried is
+apparatus and gives way. One whose navigator steers by none joins as a non-yielding agent; so does
+every entity without a navigator whose root body moves freely (a mocap body or a free joint, not a
+hinged door) and that stands on the floor (its lowest geom below 0.1 m: a robot driven by its own
+stack, one standing still, a pushed cart, not a tote on a table), as the disc of its extent in the
+plane. Such an agent's state is overwritten from ground truth every tick, its velocity measured
+from where it has been — so the others go round it and it is never pushed by them. One lifted off the floor while it is carried is
 absent. A mover's `ignore` applies to its steering as to its stopping; `orca` cannot leave one
 agent out of another's solve and refuses it by name. Both models keep `clearance` between two discs
-passing (0.24 m), and `clearance_time` more for each m/s they close at (0.06 s). A mover's disc is
+passing (0.24 m), and `clearance_time` more for each m/s they close at (0.06 s): `give_way` on the
+closing speed itself, `orca` by growing each disc by half the clearance and `clearance_time` times its
+own speed, so two keep `clearance_time` times the sum of their speeds -- their closing speed head-on
+and past one standing. A mover's disc is
 its `radius`, or the one its embodiment declares for avoidance (`NavOutput.agent_radius`: a walker's
 is a person's, 0.23 m), or its measured footprint.
 
@@ -174,7 +178,11 @@ looked at every tick (`CautionProbe._ahead`): `width` across, from its body's fr
 beyond it, from the bottom of its body up (the floor, for a mover standing on it), laid along the
 path ahead. A thing that moves counts when any of its geoms, visual ones too, reaches into the
 mover's `obstacle_height` band, and is where its collidable geoms are, by their extent; what is in the way is what reaches past the
-body's front, so one already inside the body counts at once and one beside it does not. The same corridor decides holding and setting off.
+body's front, so one already inside the body counts at once and one beside it does not; nor does
+what goes along the way at least 0.8 times as fast as the mover, its velocity measured from where its
+root body has been. The same corridor decides holding and setting off. An embodiment declares
+`avoidance:` keys for what it moves (`NavOutput.avoidance_defaults`; a walker a 0.46 m `width`), and
+a world's own key wins.
 
 `reroute` remembers where it was stopped, as a disc that expires after `forget_after`, and plans
 around it. The memory is what makes it work at all: the grid is static, so a mover that only

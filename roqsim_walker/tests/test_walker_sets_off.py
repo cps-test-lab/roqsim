@@ -1,10 +1,9 @@
 """A walker that held for a robot sets off again only when the corridor it holds for is clear.
 
-The encounter: a walker with ``avoidance: {steer: none, stop: true}`` holds for a
+The encounter: a walker with ``avoidance: {steer: none, stop: true, sidestep: false}`` holds for a
 robot in its way, and the robot comes to stand beside its way, 40 degrees off its heading and close.
-The robot is a TurtleBot's shape: a base lower than the walker's scan plane (its obstacle band's
-floor plus 5 cm, 0.15 m) and above it only a lidar and a camera bracket, narrower than the rays'
-spacing. Standing so, it is in the walker's way and no ray finds it.
+The robot is a TurtleBot's shape: a base lower than the walker's obstacle band and above it only a
+lidar and a camera bracket, a few centimetres across. Standing so, its base is in the walker's way.
 """
 
 from __future__ import annotations
@@ -51,7 +50,8 @@ def _engine(tmp_path):
                             "output": "walker",
                             "speed": 0.5,
                             "goals": [[4.0, START[1]]],
-                            "avoidance": {"steer": "none", "stop": True},
+                            # a walker that holds: stepping round is test_walker_sidestep's
+                            "avoidance": {"steer": "none", "stop": True, "sidestep": False},
                         }
                     }
                 ],
@@ -137,24 +137,15 @@ def test_a_held_walker_sets_off_once_the_robot_has_gone(held):
     assert _navigator(engine)._state.pos[0] > at[0] + 0.5, "it held for a robot that had gone"
 
 
-def test_a_held_walker_does_not_pass_a_robot_inside_its_corridor_closer_than_it_stops_for(held):
+def test_a_held_walker_holds_for_a_robot_inside_its_corridor_though_clear_of_its_body(held):
     """73 degrees off, the base 2 cm clear of where its feet go but inside the corridor it stops for.
 
-    Walking on, it would pass without touching, but closer than it stops for. It holds, or steps
-    round the robot (``sidestep``, a walker's default) away from it: it never comes nearer the
-    robot than where the robot was put, 2 cm from its feet.
+    It would pass without touching; it would also pass closer than it stops for, so it holds.
     """
     engine, at = held
-    model, data = engine.ctx.model, engine.ctx.data
-    walker = _collidable(model, engine.ctx.entities.get("pedestrian"))
-    robot = _collidable(model, engine.ctx.entities.get("robot"))
-    pairs = [(a, b) for a in walker for b in robot]
     _place(engine, at + np.array([0.10, 0.36]))
-    mujoco.mj_forward(model, data)
-    put = min(mujoco.mj_geomDistance(model, data, a, b, 1.0, np.zeros(6)) for a, b in pairs)
-    least = _run(engine, 6.0, watch=pairs)
-    assert least > 0.0, f"it walked into the robot ({least * 1000:.0f} mm into it)"
-    assert least > put - 0.01, f"it came to {least * 1000:.0f} mm of it, from {put * 1000:.0f}"
+    _run(engine, 3.0)
+    assert _navigator(engine)._state.pos == pytest.approx(at, abs=0.01)
 
 
 def test_a_held_walker_sets_off_past_a_robot_beside_it_and_clear_of_its_corridor(held):
