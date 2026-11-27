@@ -191,7 +191,7 @@ Under every convention: positions are metres in the world frame of the target as
 components spawn); ``fx, fy, cx, cy`` are pixels of the image written, at its ``width`` and
 ``height``; x counts right from the image's left edge and y down from its top edge. The rotation is
 exactly one of ``R`` (3x3 rows, orthonormal with determinant +1 to 1e-3, drawn as the rotation
-nearest it, so a matrix written to a few decimals reads) or ``quat``: a list is
+nearest it, so a matrix written to four or more decimals reads) or ``quat``: a list is
 ``w, x, y, z``, a mapping ``{x, y, z, w}`` names its parts as a ROS message does, and under ``ros``
 only the mapping is admitted, since a ROS list is ``x, y, z, w``. The camera's centre is
 ``position``, a list or ``{x, y, z}``.
