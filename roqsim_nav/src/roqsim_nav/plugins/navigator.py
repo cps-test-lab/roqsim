@@ -89,7 +89,7 @@ from ..avoidance import NO_AGENT, SERVICE_KEY, resolve_model, service_for
 from ..avoidance import available as avoidance_models
 from ..behavior import NavCore, NavParams, build_tree
 from ..caution import CautionProbe
-from ..control import LAWS
+from ..control import LAWS, STOPPED
 from ..grid import DEFAULT_RESOLUTION, build_grid, grid_key
 from ..handle import NavHandle, Sequencer
 from ..obstacles import holdable_roots
@@ -824,6 +824,9 @@ class NavigatorPlugin(Plugin):
             self._resume_configured_route()
 
         wanted = self._core.pref_vel
+        if float(np.hypot(wanted[0], wanted[1])) < STOPPED:
+            # Its own route asks for no speed: a dwell, or a goal reached.
+            self._caution.leg_ended()
         if self._avoid is not None:
             preferred = wanted
             entity = ctx.entities.get(self.entity)
@@ -1071,7 +1074,13 @@ class NavigatorPlugin(Plugin):
             last, self._last_pose = self._last_pose, (now, pos)
             if last is None or now - last[0] <= 0.0:
                 return np.zeros(2)
-            return (pos - last[1]) / (now - last[0])
+            dt = now - last[0]
+            limit = float(self.config.get("max_speed") or max(1.0, 2.0 * self._state.speed))
+            if float(np.linalg.norm(pos - last[1])) > 2.0 * limit * dt + 0.05:
+                # Further than it can move in a tick: placed elsewhere (a presence change, a
+                # scenario's placement), not moving; measured afresh from where it is now.
+                return np.zeros(2)
+            return (pos - last[1]) / dt
         twist = body_twist(ctx.model, ctx.data, self._bid)
         return np.array([twist.linear[0], twist.linear[1]], dtype=float)
 
