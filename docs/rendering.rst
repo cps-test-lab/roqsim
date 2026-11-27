@@ -153,15 +153,15 @@ cx cy`` in pixels and a pose. Every renderer that declares ``posed`` draws it.
    near: 0.05                # optional, m; default 0.01
    far: 30.0                 # optional, m; default the model's own far plane
    views:
-     - name: "2_1276"        # unique; the file stem of its images
-       width: 353
-       height: 628
-       fx: 623.79
-       fy: 626.54
-       cx: 176.5
-       cy: 314.0
+     - name: "view_0001"     # unique; the file stem of its images
+       width: 640
+       height: 480
+       fx: 600.0
+       fy: 600.0
+       cx: 320.0
+       cy: 240.0
        R: [[1, 0, 0], [0, 0, -1], [0, 1, 0]]   # world to camera: looking along +y, level
-       position: [0.462, -2.131, 0.543]
+       position: [1.0, -2.0, 0.5]
 
 The file is JSON or YAML, read by its extension, and it names its convention: a preset, or all three
 keys. A file that names neither is refused, and so is an unknown preset, naming the presets, the
@@ -191,7 +191,8 @@ Under every convention: positions are metres in the world frame of the target as
 components spawn); ``fx, fy, cx, cy`` are pixels of the image written, at its ``width`` and
 ``height``; x counts right from the image's left edge and y down from its top edge. The rotation is
 exactly one of ``R`` (3x3 rows, orthonormal with determinant +1 to 1e-3, drawn as the rotation
-nearest it, so a matrix written to four or more decimals reads) or ``quat``: a list is
+nearest it, so a matrix written to four or more decimals reads; ``--check`` warns where that
+rotation moves the picture by more than a tenth of a pixel) or ``quat``: a list is
 ``w, x, y, z``, a mapping ``{x, y, z, w}`` names its parts as a ROS message does, and under ``ros``
 only the mapping is admitted, since a ROS list is ``x, y, z, w``. The camera's centre is
 ``position``, a list or ``{x, y, z}``.
