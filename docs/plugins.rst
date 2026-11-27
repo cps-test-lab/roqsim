@@ -564,8 +564,8 @@ they close at (0.06 s). A mover's disc is its ``radius``, or else the one its em
 declares for avoidance (``NavOutput.agent_radius``: a walker's is a person's, 0.23 m, narrower than
 its model's hips), or else its measured footprint; the planner's inflation is not changed by it. ``give_way`` passes a mover crossing its way behind it, on the side it comes
 from, and one standing or going its way on the side away from it; head-on, and for one on its line,
-it gives way to its ``side`` (right by default). ``ignore`` applies to steering as to stopping;
-``orca`` cannot leave one agent out of another's solve, and a world asking it to is refused.
+it gives way to its ``side`` (right by default). ``ignore`` applies to steering as to stopping,
+in both models.
 
 Two settings are worth knowing before a scene misbehaves. ``lookahead`` is clear corridor measured
 from the mover's **front**, so it is how far short of something it halts -- the 1.2 m default is
@@ -659,7 +659,7 @@ deliberately not a costmap: a handful of discs, stamped onto a copy of the raste
 nowhere else. ``recovery`` is separate again, for a mover that is wedged rather than merely blocked.
 
 ``steer`` names the local model, resolved from the ``roqsim_nav.avoidance`` registry -- ORCA is one
-implementation, behind the ``[avoidance]`` extra. Every mover joins the model whether or not it
+implementation, RVO2's solve ported to Python, walls included. Every mover joins the model whether or not it
 steers, because opting out of yielding is not opting out of existing: a mover the others cannot see
 is one they drive into. A robot under test, having no navigator at all, joins as a non-yielding agent
 whose state is overwritten from ground truth, so the others go round it and it is never pushed.

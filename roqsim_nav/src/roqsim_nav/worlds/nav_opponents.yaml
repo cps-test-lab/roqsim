@@ -39,11 +39,8 @@
 # Not a ladder: a walker steers without ever stopping, which no ordered scale can say. The probe's
 # tuning (lookahead, width, clear_time, ...) lives in the same block.
 #
-# `give_way` is pure Python and needs nothing to build; `orca` is better and reciprocal, once you
-# have the extra:
-#
-#   pip install Cython
-#   pip install --no-build-isolation git+https://github.com/sybrenstuvel/Python-RVO2.git
+# `give_way` picks each side by a rule; `orca` solves every mover's velocity jointly and is
+# reciprocal.
 #
 # The first mover to name one fixes it for the world, because agents can only avoid each other
 # inside one model. A mover with no `steer` still stops for traffic through its own probe -- it
