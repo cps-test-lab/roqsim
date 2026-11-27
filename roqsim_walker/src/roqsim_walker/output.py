@@ -36,9 +36,10 @@ WALKER_UPDATE_HZ = 60.0
 
 #: How a walker meets what is in its way, when its world does not say: its corridor is a person's
 #: body wide, 0.46 m, so a walker abreast at a person's spacing is beside it and not in its way; it
-#: looks 3 s ahead, slows no harder than 1.0 m/s², stands 0.30 m short of something standing or
-#: moving along its way and 0.85 m short of a mover crossing ahead, waits 0.39 s once the way has
-#: cleared and walks off with a 0.54 s time constant. ``roqsim_nav``'s navigator documents each key.
+#: looks 3 s ahead, slows on the curve of a stop at 1.0 m/s², stands 0.30 m short of something
+#: standing or coming the other way and 0.85 m short of a mover crossing ahead, follows what walks
+#: ahead of it, waits 0.39 s once the way has cleared and walks off with a 0.54 s time constant.
+#: ``roqsim_nav``'s navigator documents each key.
 WALKER_AVOIDANCE = MappingProxyType(
     {
         "width": 0.46,

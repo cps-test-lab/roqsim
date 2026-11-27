@@ -89,7 +89,7 @@ from ..avoidance import NO_AGENT, SERVICE_KEY, resolve_model, service_for
 from ..avoidance import available as avoidance_models
 from ..behavior import NavCore, NavParams, build_tree
 from ..caution import RETIRED, CautionProbe
-from ..control import LAWS
+from ..control import LAWS, STOPPED
 from ..grid import DEFAULT_RESOLUTION, build_grid, grid_key
 from ..handle import NavHandle, Sequencer
 from ..obstacles import holdable_roots
@@ -439,12 +439,12 @@ class NavigatorPlugin(Plugin):
         self._yields = False
         self._configured_goals: list[tuple] = []
         self._commanded = False
+        #: The ``avoidance:`` keys this mover took from its output, as logged at configure.
+        self.avoidance_defaults_taken: dict = {}
         #: ``(sim time, xy)`` of the last tick, for the velocity of a body whose pose is written.
         self._last_pose: tuple[float, np.ndarray] | None = None
         #: The speed the probe's pace has reached (m/s), or ``None`` while nothing paces it.
         self._paced_speed: float | None = None
-        #: The ``avoidance:`` keys this mover took from its output, as logged at configure.
-        self.avoidance_defaults_taken: dict = {}
         self._pose_snapshot = (0.0, 0.0, 0.0)
         self._failure_logged = ""
 
@@ -781,6 +781,7 @@ class NavigatorPlugin(Plugin):
         self._state.pos = np.array([x, y], dtype=float)
         self._state.yaw = yaw
         self._last_pose = None
+        self._paced_speed = None  # a run starts as its world says, not as the last one ended
         self._state.waypoints[0] = (x, y)
         # Built again on the first tick, against this run's world.
         self._core.planner = None
@@ -862,6 +863,9 @@ class NavigatorPlugin(Plugin):
             self._resume_configured_route()
 
         wanted = self._core.pref_vel
+        if float(np.hypot(wanted[0], wanted[1])) < STOPPED:
+            # Its own route asks for no speed: a dwell, or a goal reached.
+            self._caution.leg_ended()
         if self._avoid is not None:
             preferred = wanted
             entity = ctx.entities.get(self.entity)
@@ -955,9 +959,9 @@ class NavigatorPlugin(Plugin):
         if planner is None:
             return  # nothing to route around with: straight legs, and caution is the only answer
         expires = float(ctx.sim_time) + probe.forget_after
-        # EVERY hit, not just the nearest: the rays fan across the corridor, so a wall in front
-        # produces several hits spread along it, and marking the lot outlines how far the obstacle
-        # reaches across the way. Marking only the nearest point leaves a disc narrower than the
+        # EVERY point, not just the nearest: a thing in the corridor reports points across it as
+        # far as it spans it, so a wall in front produces several spread along it, and marking the
+        # lot outlines how far the obstacle reaches across the way. Marking only the nearest point leaves a disc narrower than the
         # thing it stands for -- the next plan rounds the disc, drives into the same wall half a
         # metre along, and reports a point already inside the mark, so nothing new is learnt and the
         # mover holds there for good.
@@ -1145,7 +1149,13 @@ class NavigatorPlugin(Plugin):
             last, self._last_pose = self._last_pose, (now, pos)
             if last is None or now - last[0] <= 0.0:
                 return np.zeros(2)
-            return (pos - last[1]) / (now - last[0])
+            dt = now - last[0]
+            limit = float(self.config.get("max_speed") or max(1.0, 2.0 * self._state.speed))
+            if float(np.linalg.norm(pos - last[1])) > 2.0 * limit * dt + 0.05:
+                # Further than it can move in a tick: placed elsewhere (a presence change, a
+                # scenario's placement), not moving; measured afresh from where it is now.
+                return np.zeros(2)
+            return (pos - last[1]) / dt
         twist = body_twist(ctx.model, ctx.data, self._bid)
         return np.array([twist.linear[0], twist.linear[1]], dtype=float)
 
@@ -1236,6 +1246,7 @@ class NavigatorPlugin(Plugin):
         self._core.reset()
         self._core.exact = exact
         self._caution.reset()
+        self._paced_speed = None  # a new route starts as one never held, as its probe does
         self._started = True
         self._seq.apply(seq)
 

@@ -1,9 +1,9 @@
 """Walkers side by side at people's spacing do not hold each other up.
 
 A walker's hips are 0.66 m across, so two walking abreast 0.6 m apart, as people do, touch at the
-shoulder, and as they sway one's hip reaches past the other's front. A walker follows what moves
-along its way and never stands for it, so neither holds for the other; nor does one a step behind
-the other in a group setting off together.
+shoulder, and as they sway one's hip reaches past the other's front. A walker's corridor is a
+person's body wide (0.46 m), and what goes along its way as fast as it comes is not in its way, so
+neither holds for the other; nor does one a step behind the other in a group setting off together.
 """
 
 from __future__ import annotations

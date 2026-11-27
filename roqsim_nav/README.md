@@ -166,7 +166,11 @@ looked at every tick (`CautionProbe._ahead`): `width` across, from its body's fr
 beyond it, from the bottom of its body up (the floor, for a mover standing on it), laid along the
 path ahead. A thing that moves counts when any of its geoms, visual ones too, reaches into the
 mover's `obstacle_height` band, and is where its collidable geoms are, by their extent; what is in the way is what reaches past the
-body's front, so one already inside the body counts at once and one beside it does not. The same corridor decides holding and setting off.
+body's front, so one already inside the body counts at once and one beside it does not; nor does
+what goes along the way at least 0.8 times as fast as the mover, its velocity measured from where its
+root body has been. The same corridor decides holding and setting off. An embodiment declares
+`avoidance:` keys for what it moves (`NavOutput.avoidance_defaults`; a walker a 0.46 m `width`), and
+a world's own key wins.
 
 `reroute` remembers where it was stopped, as a disc that expires after `forget_after`, and plans
 around it. The memory is what makes it work at all: the grid is static, so a mover that only
