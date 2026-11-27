@@ -219,6 +219,9 @@ for every renderer):
   :func:`roqsim.views.read_segmentation` gives it as uint16; an array made from the image as Pillow
   opens it is uint16 or int32, depending on the Pillow version, with the same indices.
 
+Two views whose files would be one, such as ``x.seg`` beside ``x`` with segmentation asked for, are
+refused, naming both, before anything is drawn.
+
 ``manifest.json`` lists what drew them: roqsim's version, the target (and the recording and its
 moment), the renderer with its settings and capabilities, the world's conditions (``bake_used``),
 the views file with its sha256 and its convention, the images, the depth convention, the legend,

@@ -1414,7 +1414,7 @@ def render_views_target(
     the renderer's capabilities, and the record carries how each view was read (``reading``).
     """
     from .registry import resolve_renderer
-    from .views import ViewsError, load_views, render_views, write_views
+    from .views import ViewsError, check_files, load_views, render_views, write_views
 
     out = Path(out)
     if out.suffix.lower() in _IMAGE_EXT + _VIDEO_EXT:
@@ -1430,6 +1430,7 @@ def render_views_target(
         raise RenderError("--at selects a moment in a recording, so it needs --state.")
     try:
         views_file = load_views(views)
+        check_files(views_file.views, images)
     except ViewsError as err:
         raise RenderError(str(err)) from None
     asked = _renderer_asked(overrides)
@@ -1714,7 +1715,8 @@ def main(argv: list | None = None) -> int:
         given = [k for k in _NOT_WITH_VIEWS if getattr(args, k, None)]
         if given:
             k = given[0]
-            parser.error(f"--views with --{k.replace('_', '-')}: {_NOT_WITH_VIEWS[k]}")
+            flag = next(a.option_strings[0] for a in parser._actions if a.dest == k)
+            parser.error(f"--views with {flag}: {_NOT_WITH_VIEWS[k]}")
         try:
             record = render_views_target(
                 args.target,

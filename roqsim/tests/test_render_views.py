@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -545,6 +546,8 @@ def test_a_renderer_that_fails_is_reported_in_one_line(scene, tmp_path, capsys):
         ["--fps", "10"],
         ["--speed", "2"],
         ["--show"],
+        ["--from", "1"],
+        ["--to", "1"],
     ],
 )
 def test_what_views_cannot_be_combined_with_is_refused(extra, scene, tmp_path, capsys):
@@ -552,7 +555,31 @@ def test_what_views_cannot_be_combined_with_is_refused(extra, scene, tmp_path, c
 
     with pytest.raises(SystemExit) as err:
         render.main([scene, "--views", _views_file(tmp_path), "--out", str(tmp_path), *extra])
-    assert err.value.code == 2 and "--views with" in capsys.readouterr().err
+    assert err.value.code == 2 and f"--views with {extra[0]}:" in capsys.readouterr().err
+
+
+def test_views_whose_files_would_overwrite_each_other_are_refused(scene, tmp_path, capsys):
+    # A view named x.seg writes its colour to x.seg.png, where x writes its segmentation.
+    from roqsim import render
+
+    doc = yaml.safe_load(Path(_views_file(tmp_path)).read_text())
+    first = doc["views"][0]
+    doc["views"] = [{**first, "name": "x"}, {**first, "name": "x.seg"}]
+    views = tmp_path / "collide.yaml"
+    views.write_text(yaml.safe_dump(doc))
+    args = [scene, "--views", str(views), "--out", str(tmp_path / "o")]
+    assert render.main([*args, "--images", "rgb"]) == 0
+    capsys.readouterr()
+    code = render.main([*args, "--images", "rgb,segmentation"])
+    assert code == 2
+    assert "view 'x.seg' would write x.seg.png, which view 'x' writes" in capsys.readouterr().err
+    model, data = _world()
+    parsed = [V.View.from_pose("mujoco", **{**_six_ways()["mujoco"][1], "name": n}) for n in "ab"]
+    parsed.append(V.View.from_pose("mujoco", **{**_six_ways()["mujoco"][1], "name": "a.seg"}))
+    rendered = V.render_views((model, data), parsed, images=("rgb", "segmentation"))
+    with pytest.raises(V.ViewsError, match="would write a.seg.png"):
+        V.write_views(tmp_path / "w", rendered)
+    assert not (tmp_path / "w").exists() and rendered.service is None
 
 
 def test_an_image_file_as_out_is_refused(scene, tmp_path, capsys):

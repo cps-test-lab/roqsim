@@ -227,3 +227,11 @@ def test_render_refuses_an_unknown_preset_naming_the_presets_and_the_command(tmp
     err = capsys.readouterr().err
     for want in (*V.PRESETS, *V.KEYS, "did you mean 'colmap'", "roqsim views describe"):
         assert want in err
+
+
+def test_a_camera_looking_straight_down_or_up_says_which():
+    entry = {"name": "v", "width": 64, "height": 48, "fx": 50.0, "fy": 50.0, "cx": 31.5, "cy": 23.5}
+    down = V.View.from_pose("mujoco", **entry, quat=[1, 0, 0, 0], position=[0, 0, 3]).describe()
+    up = V.View.from_pose("mujoco", **entry, quat=[0, 1, 0, 0], position=[0, 0, 0]).describe()
+    assert down["roll_deg"] is None and "looking straight down" in down["text"]
+    assert up["roll_deg"] is None and "looking straight up" in up["text"]

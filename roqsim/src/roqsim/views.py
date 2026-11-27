@@ -289,7 +289,8 @@ class View:
         else:
             look = f"{toward}, {abs(elevation):.0f}° {'up' if elevation > 0 else 'down'}"
         if roll is None:
-            up_text = f"up is {_vec(up)}, roll not defined (looking straight {toward[1:]})"
+            straight = "up" if fwd[2] > 0 else "down"
+            up_text = f"up is {_vec(up)}, roll not defined (looking straight {straight})"
         else:
             side = "right" if roll > 0 else "left"
             up_text = (
@@ -871,6 +872,25 @@ class _Legend:
         return out.astype(np.uint16)
 
 
+#: The file name each image of a view is written under, after the view's name.
+FILE_SUFFIX = {"rgb": ".png", "depth": ".depth.npy", "segmentation": ".seg.png"}
+
+
+def check_files(views: Sequence[View], images: Sequence[str]) -> None:
+    """Refuse *views* two of which would write *images* into one file (a view ``x.seg`` writes its
+    colour where ``x`` writes its segmentation), naming both, before anything is drawn."""
+    owner: dict[str, str] = {}
+    for view in views:
+        for image in images:
+            name = view.name + FILE_SUFFIX[image]
+            if name in owner:
+                raise ViewsError(
+                    f"view {view.name!r} would write {name}, which view {owner[name]!r} writes; "
+                    "rename one of them"
+                )
+            owner[name] = view.name
+
+
 def write_views(out_dir: str | Path, rendered: RenderedViews, extra: Mapping | None = None) -> dict:
     """Draw *rendered* into *out_dir* and write its ``manifest.json``; returns the manifest.
 
@@ -883,6 +903,11 @@ def write_views(out_dir: str | Path, rendered: RenderedViews, extra: Mapping | N
 
     from .conditions import of_model as conditions_of_model  # noqa: PLC0415
 
+    try:
+        check_files(rendered.views, rendered.images)
+    except ViewsError:
+        rendered.close()
+        raise
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     legend = _Legend(rendered.model, rendered.ctx)
@@ -890,15 +915,15 @@ def write_views(out_dir: str | Path, rendered: RenderedViews, extra: Mapping | N
     for view, frame in rendered:
         files = {}
         if frame.rgb is not None:
-            path = out / f"{view.name}.png"
+            path = out / (view.name + FILE_SUFFIX["rgb"])
             Image.fromarray(np.ascontiguousarray(frame.rgb)).save(path)
             files["rgb"] = path.name
         if frame.depth is not None:
-            path = out / f"{view.name}.depth.npy"
+            path = out / (view.name + FILE_SUFFIX["depth"])
             np.save(path, np.asarray(frame.depth, dtype=np.float32))
             files["depth"] = path.name
         if frame.segmentation is not None:
-            path = out / f"{view.name}.seg.png"
+            path = out / (view.name + FILE_SUFFIX["segmentation"])
             Image.fromarray(legend.encode(frame.segmentation)).save(path)
             files["segmentation"] = path.name
         record = view.as_record()
