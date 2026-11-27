@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 import yaml
 from PIL import Image
+from same_picture import assert_same_picture
 
 from roqsim import views as V
 from roqsim.render_api import IMAGES, RenderError
@@ -293,7 +294,7 @@ def test_a_view_of_a_file_is_the_model_camera_s_picture():
     (ref,) = service.render_now([(ref_view, IMAGES)], data)
     service.close()
     for kind in IMAGES:
-        assert np.array_equal(got.image(kind), ref.image(kind)), kind
+        assert_same_picture(got.image(kind), ref.image(kind), kind)
 
 
 def test_colour_is_drawn_unless_more_is_asked_for():

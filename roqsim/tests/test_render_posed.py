@@ -13,6 +13,7 @@ import math
 import mujoco
 import numpy as np
 import pytest
+from same_picture import assert_same_picture
 
 from roqsim.plugin import PluginError
 from roqsim.presence import ABSENT_GEOM_GROUP, WINDOW_GEOM_GROUP
@@ -90,7 +91,8 @@ def _draw(service, views, data):
 
 @pytest.mark.parametrize("sensor", sorted(SENSORS))
 def test_a_posed_view_is_the_picture_of_the_model_camera_at_its_pose(sensor):
-    """Colour, depth and segmentation, pixel for pixel, also when two sizes share one batch."""
+    """Colour, depth and segmentation, pixel for pixel as a rasteriser draws them
+    (:func:`same_picture.assert_same_picture`), also when two sizes share one batch."""
     model, data = _world(sensor)
     service = RenderService(model)
     try:
@@ -117,8 +119,8 @@ def test_a_posed_view_is_the_picture_of_the_model_camera_at_its_pose(sensor):
         )
         a, b, c, d = _draw(service, [ref, posed, small_ref, small], data)
         for kind in IMAGES:
-            assert np.array_equal(a.image(kind), b.image(kind)), kind
-            assert np.array_equal(c.image(kind), d.image(kind)), kind
+            assert_same_picture(b.image(kind), a.image(kind), kind)
+            assert_same_picture(d.image(kind), c.image(kind), kind)
         assert (np.asarray(a.segmentation)[..., 0] >= 0).any()
     finally:
         service.close()
@@ -151,11 +153,10 @@ def test_an_off_centre_principal_point_shifts_the_picture_by_exactly_that_many_p
     model, data = _world("centred")
     fx, fy, cx, cy = camera_intrinsics(model, 0, W, H, float(model.cam_fovy[0]))
     a, b = _posed_pair(model, data, (fx, fy, cx, cy), (fx, fy, cx + 7, cy - 4))
-    # The optical axis 7 px right and 4 px up: the picture moves with it. Colour and labels to the
-    # bit; depth to float32's rounding of another frustum's interpolation.
-    for kind in ("rgb", "segmentation"):
-        assert np.array_equal(b.image(kind)[0 : H - 4, 7:W], a.image(kind)[4:H, 0 : W - 7]), kind
-    np.testing.assert_allclose(b.depth[0 : H - 4, 7:W], a.depth[4:H, 0 : W - 7], rtol=1e-5)
+    # The optical axis 7 px right and 4 px up: the picture moves with it, as one picture drawn
+    # through another frustum.
+    for kind in IMAGES:
+        assert_same_picture(b.image(kind)[0 : H - 4, 7:W], a.image(kind)[4:H, 0 : W - 7], kind)
 
 
 def test_a_rolled_view_is_the_unrolled_one_rotated():
