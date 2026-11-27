@@ -79,6 +79,8 @@ What it gives, and what it does not
 - The **moving bodies** -- robots, props a plugin moves -- drawn by MuJoCo's renderer and put in
   by depth. They are lit by the world's lights, not by the light baked into the capture, and they
   cast no shadow onto it.
+- **Posed cameras**: a camera given by a pose and intrinsics alone, as a views file states one
+  (:meth:`RenderService.view_at <roqsim.rendering.RenderService.view_at>`), with its moving bodies, so a photo's camera is drawn into the capture.
 - No **segmentation**: a capture has no objects, and a camera asking for it fails when the world
   loads.
 - No **orthographic** camera.
