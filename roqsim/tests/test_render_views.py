@@ -214,6 +214,38 @@ def test_a_rotation_written_to_a_few_decimals_reads_as_the_rotation_it_states():
             V.View.from_pose("colmap", **entry, R=wrong.tolist())
 
 
+def test_a_reading_warns_where_the_nearest_rotation_moves_the_picture():
+    # A matrix inside the tolerance whose axes are not square to each other is drawn as the rotation
+    # nearest it, turned from what was written. On a long lens that is a visible part of a pixel,
+    # and the reading says so; rounding to four decimals or more stays far below it.
+    (c, s), (k, n) = ((math.cos(a), math.sin(a)) for a in (math.radians(28.0), math.radians(17.0)))
+    exact = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]) @ np.array(
+        [[1.0, 0.0, 0.0], [0.0, k, -n], [0.0, n, k]]
+    )
+    sheared = exact @ np.array([[1.0, 4e-4, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    entry = {"name": "v", "width": 64, "height": 48, "cx": 32, "cy": 24, "position": [0, 0, 1]}
+    long, short = {"fx": 2000.0, "fy": 2000.0}, {"fx": 50.0, "fy": 50.0}
+
+    def reading(lens, rotation):
+        return V.View.from_pose("colmap", **entry, **lens, **rotation).describe()
+
+    coarse = reading(long, {"R": sheared.tolist()})
+    turned = coarse["rotation_turned_deg"]
+    assert turned == pytest.approx(math.degrees(2e-4), rel=0.05)  # half the shear, on two axes
+    (warning,) = coarse["warnings"]
+    assert "not exactly a rotation" in warning and f"{turned:.3f}°" in warning
+    assert f"about {math.radians(turned) * 2000.0:.1f} px" in warning
+    assert "WARNING 'R' is not exactly a rotation" in coarse["text"]
+    # The same matrix on a short lens moves the picture by less than the reading speaks of.
+    assert reading(short, {"R": sheared.tolist()})["warnings"] == []
+    for decimals in (4, 6):
+        rounded = reading(long, {"R": np.round(exact, decimals).tolist()})
+        assert rounded["warnings"] == [] and 0 < rounded["rotation_turned_deg"] < 0.002
+    # An exact matrix is turned by nothing; a quaternion has no matrix to be turned from.
+    assert reading(long, {"R": exact.tolist()})["rotation_turned_deg"] == pytest.approx(0, abs=1e-9)
+    assert reading(long, {"quat": [1, 0, 0, 0]})["rotation_turned_deg"] is None
+
+
 def test_a_name_used_twice_is_refused(tmp_path):
     doc = _doc()
     doc["views"].append(dict(doc["views"][0]))
