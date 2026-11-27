@@ -1142,12 +1142,11 @@ class NavigatorPlugin(Plugin):
                 self._avoid.exclude(self._agent, name)
 
     def _agent_radius(self, ctx) -> float:
-        """This mover's disc to the avoidance model: its ``radius``, or else the one its embodiment
-        declares for avoidance (:attr:`NavOutput.agent_radius`), or else its measured footprint.
-        Not the planner's inflation, which stays :meth:`radius`."""
-        configured = self.config.get("radius")
+        """This mover's disc to the avoidance model: the one its embodiment declares for avoidance
+        (:attr:`NavOutput.agent_radius`: a walker's is a person's, whatever footprint it plans
+        with), or else its ``radius`` or measured footprint (:meth:`radius`, the planner's)."""
         declared = getattr(self._output, "agent_radius", None)
-        if configured is None and declared is not None:
+        if declared is not None:
             return float(declared)
         return self.radius(ctx)
 
