@@ -149,19 +149,22 @@ def barycentric(uv_tri: np.ndarray, p: np.ndarray) -> np.ndarray:
     return w / np.maximum(w.sum(1, keepdims=True), 1e-12)
 
 
-#: sRGB-encoded byte to linear, and linear (on a fine grid over [0, 1]) to an sRGB-encoded byte.
-_TO_LINEAR = None
+#: sRGB-encoded byte to linear, and linear (on a fine grid over [0, 1]) to an sRGB-encoded byte, built on first
+#: use. One global holds both and is assigned once both are built: compose_entity runs in a thread pool, and a
+#: thread arriving while they are built must find either none or both.
 _TO_SRGB_STEPS = 16384
-_TO_SRGB = None
+_LUTS = None
 
 
 def _luts():
-    global _TO_LINEAR, _TO_SRGB
-    if _TO_LINEAR is None:
-        _TO_LINEAR = srgb_to_linear(np.arange(256, dtype=np.float32) / 255.0).astype(np.float32)
+    global _LUTS
+    luts = _LUTS
+    if luts is None:
+        to_linear = srgb_to_linear(np.arange(256, dtype=np.float32) / 255.0).astype(np.float32)
         x = np.arange(_TO_SRGB_STEPS + 1, dtype=np.float32) / _TO_SRGB_STEPS
-        _TO_SRGB = linear_to_srgb(x).astype(np.float32)
-    return _TO_LINEAR, _TO_SRGB
+        luts = (to_linear, linear_to_srgb(x).astype(np.float32))
+        _LUTS = luts
+    return luts
 
 
 def to_srgb(x: np.ndarray) -> np.ndarray:

@@ -389,3 +389,34 @@ def test_a_name_the_bake_would_add_that_the_world_has_draws_it_unbaked(tmp_path,
         assert m.geom_group[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "wall_e")] != 3
     finally:
         engine.shutdown()
+
+
+def test_to_srgb_is_safe_when_a_second_thread_meets_the_tables_being_built(monkeypatch):
+    """compose_entity runs in a thread pool, so two threads can meet in to_srgb's first use. One is held inside
+    the tables' construction while another calls to_srgb: it must get a full table, not one still unbuilt."""
+    import threading
+
+    from roqsim.bake import compose
+
+    monkeypatch.setattr(compose, "_LUTS", None)
+    real = compose.linear_to_srgb
+    calls, errors = [], []
+
+    def other():
+        try:
+            compose.to_srgb(np.array([0.0, 0.5, 1.0], np.float32))
+        except Exception as e:  # noqa: BLE001  (the failure under test)
+            errors.append(e)
+
+    def held(x):
+        calls.append(1)
+        if len(calls) == 1:
+            t = threading.Thread(target=other)
+            t.start()
+            t.join()
+        return real(x)
+
+    monkeypatch.setattr(compose, "linear_to_srgb", held)
+    out = compose.to_srgb(np.array([0.0, 0.5, 1.0], np.float32))
+    assert not errors, errors
+    assert out[0] == pytest.approx(0.0) and out[2] == pytest.approx(1.0) and 0.7 < out[1] < 0.8
