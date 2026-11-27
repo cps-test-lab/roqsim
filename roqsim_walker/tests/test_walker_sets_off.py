@@ -60,7 +60,7 @@ def _engine(tmp_path):
                 "spawn_model": {
                     "model": str(tmp_path / "robot.xml"),
                     "motion": "driven",
-                    # In the walker's way, its lidar on the middle ray: the walker holds for it.
+                    # In the walker's way, its lidar in the walker's corridor: the walker holds for it.
                     "pose": {
                         "position": {"x": START[0] + 1.0, "y": START[1]},
                         "orientation": {"yaw": -math.pi / 2},
