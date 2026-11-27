@@ -18,7 +18,7 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.plugin import PluginError
-from roqsim_nav.avoidance import SERVICE_KEY, RegistryError
+from roqsim_nav.avoidance import SERVICE_KEY
 
 DATA = Path(__file__).parent / "data"
 
@@ -155,23 +155,14 @@ def test_an_ignored_robot_is_not_steered_round(tmp_path):
 
 
 def test_orca_steers_round_a_robot_with_no_navigator(tmp_path):
-    pytest.importorskip("rvo2")
     cart, robot = _run(_world(tmp_path, model="orca"))
     least = np.linalg.norm(cart - robot, axis=1).min()
     assert least > 0.2 + 0.17 + 0.1, f"it came {least:.2f} m from the robot's centre"
 
 
-def test_orca_refuses_an_ignore_it_cannot_apply_to_steering(tmp_path):
-    pytest.importorskip("rvo2")
-    engine = Engine(_world(tmp_path, model="orca", avoidance={"ignore": ["robot"]}))
-    engine.setup()
-    engine.reset()
-    try:
-        with pytest.raises(RegistryError, match=r"cannot leave one agent out"):
-            for _ in range(int(1.0 / engine.ctx.dt)):  # past the navigator's first tick
-                engine.step()
-    finally:
-        engine.shutdown()
+def test_orca_does_not_steer_round_a_robot_it_ignores(tmp_path):
+    cart, robot = _run(_world(tmp_path, model="orca", avoidance={"ignore": ["robot"]}))
+    assert np.abs(cart[:, 1]).max() < 0.02, "it steered round a robot it ignores"
 
 
 #: A door 0.9 m wide on a vertical hinge at one end: it moves, but only where it is fixed.
@@ -233,7 +224,6 @@ def test_a_free_cart_joins_as_the_disc_of_its_plan_view(tmp_path):
 
 def test_orca_grows_each_disc_by_half_the_clearance_and_clearance_time_times_its_speed():
     """Two agents keep `clearance` and `clearance_time` times the sum of their speeds."""
-    pytest.importorskip("rvo2")
     from types import SimpleNamespace
 
     from roqsim_nav.avoidance.orca import OrcaModel
@@ -242,7 +232,7 @@ def test_orca_grows_each_disc_by_half_the_clearance_and_clearance_time_times_its
     model.configure(SimpleNamespace(model=None), {"clearance": 0.24, "clearance_time": 0.1})
     aid = model.add_agent("a", radius=0.23, max_speed=2.0, yields=True, params={})
     model.submit(aid, (0.0, 0.0), (1.2, 0.0), (1.2, 0.0))
-    assert model._sim.getAgentRadius(aid) == pytest.approx(0.23 + 0.12 + 0.1 * 1.2)
+    assert model._agents[aid]["disc"] == pytest.approx(0.23 + 0.12 + 0.1 * 1.2)
 
 
 #: The cart with a low bumper at its front, a body of its own below the cart's.

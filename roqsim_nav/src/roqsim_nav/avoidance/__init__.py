@@ -25,9 +25,8 @@ logger = logging.getLogger(__name__)
 ENTRY_POINT_GROUP = "roqsim_nav.avoidance"
 
 #: The model a mover gets when it asks to be steered without naming one -- a walker's
-#: `avoidance: true`. Pure Python, so it needs no compiler and every install has working avoidance,
-#: which is the whole reason it, rather than the better `orca`, is the default. A navigator names
-#: its model with `avoidance: {steer: ...}`; without `steer` it is steered by none.
+#: `avoidance: true`. A navigator names its model with `avoidance: {steer: ...}`; without `steer`
+#: it is steered by none.
 DEFAULT_MODEL = "give_way"
 
 #: Where the world's shared model lives. Shared by necessity rather than by preference: agents can

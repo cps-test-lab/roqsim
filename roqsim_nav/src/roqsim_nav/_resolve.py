@@ -42,9 +42,8 @@ def resolve(ref: str, *, group: str, base: type, kind: str, base_dir: Path | Non
                     obj = ep.load()
                 except ImportError as err:
                     # Registered but not importable: its distribution is installed while one of its
-                    # own dependencies is not. `orca` is the standing example -- the entry point is
-                    # always there, `rvo2` is an optional extra -- and the caller needs to tell that
-                    # apart from a typo, so it must not surface as a bare ImportError.
+                    # own dependencies is not, and the caller needs to tell that apart from a typo,
+                    # so it must not surface as a bare ImportError.
                     raise RegistryError(
                         f"{kind} {ref!r} is registered but could not be imported: {err}. "
                         f"Its package is installed; one of its own dependencies is not."

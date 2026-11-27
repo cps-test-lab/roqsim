@@ -1,9 +1,7 @@
-"""Reciprocal give-way: enough to get two movers past each other, with no compiler.
+"""Reciprocal give-way: rules that get two movers past each other.
 
-The default, because ORCA cannot be. ORCA is the better model and it needs ``rvo2``, which
-publishes no wheel and is built from source -- so without this a plain ``pip install roqsim_nav``
-could only ever *stop* for traffic, and two movers meeting head-on would stop facing each other
-for the rest of the trial. "Avoidance is available if you have a compiler" is not avoidance.
+The default model. Each agent changes course by itself, to a side the encounter decides (below);
+``orca`` solves every agent's velocity jointly, and resolves a crowd this does not.
 
 What it does, per agent, per solve:
 

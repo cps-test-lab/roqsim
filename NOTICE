@@ -38,6 +38,16 @@ summarises them by license and lists no asset; an asset's terms and attribution 
 record.
 
 --------------------------------------------------------------------------------
+Third-party code
+--------------------------------------------------------------------------------
+
+RVO2 Library  --  Apache License 2.0
+    Copyright 2008 University of North Carolina at Chapel Hill.
+    roqsim_nav/src/roqsim_nav/avoidance/_orca.py is a Python port of its ORCA solve
+    (Agent::computeNewVelocity and linearProgram1-3), modified: neighbours are found by a scan, and
+    edges are not split as its obstacle tree splits them.
+
+--------------------------------------------------------------------------------
 Where the public/private line falls
 --------------------------------------------------------------------------------
 

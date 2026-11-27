@@ -1,9 +1,9 @@
 """The avoidance interface, asserted against a stub rather than against ORCA.
 
 That choice is the test. The interface exists so a local planner nobody here anticipated can be
-plugged in, so the thing it is tested with must be one this package knows nothing about -- and it
-**must pass with rvo2 uninstalled**. If any of these needed ORCA, the interface would have been
-shaped around ORCA, and the next model would discover that the hard way.
+plugged in, so the thing it is tested with must be one this package knows nothing about. If any of
+these needed ORCA, the interface would have been shaped around ORCA, and the next model would
+discover that the hard way.
 """
 
 from __future__ import annotations
@@ -118,24 +118,18 @@ def test_an_unknown_model_lists_what_is_available():
         resolve_model("magic")
 
 
-def test_orca_resolves_without_rvo2_and_fails_only_when_used(monkeypatch):
-    """The optional extra is imported lazily, in ``configure``, not at module import.
-
-    That is deliberate and it is what this pins: ``roqsim plugins`` and a world *listing* orca must
-    work on a machine with no compiler, and the failure must arrive when something actually tries to
-    run it -- naming the extra and the install that works, rather than as a bare ImportError from
-    inside rvo2. A plain ``pip install 'roqsim_nav[avoidance]'`` fails to build, so the message must
-    carry ``--no-build-isolation``.
-    """
+def test_orca_needs_nothing_built(monkeypatch):
+    """ORCA is solved in Python: it configures and solves with no compiled extension present."""
     from roqsim_nav.avoidance import available
 
     assert "orca" in available()
-    cls = resolve_model("orca")  # resolvable regardless
     monkeypatch.setitem(sys.modules, "rvo2", None)  # absent, whether or not this machine has it
-    with pytest.raises(ImportError, match="roqsim_nav\\[avoidance\\]") as err:
-        cls().configure(None, {})
-    assert "pip install Cython" in str(err.value)
-    assert "--no-build-isolation" in str(err.value)
+    model = resolve_model("orca")()
+    model.configure(None, {})
+    aid = model.add_agent("a", radius=0.2, max_speed=1.0, yields=True, params={})
+    model.submit(aid, (0.0, 0.0), (0.0, 0.0), (0.5, 0.0))
+    model.solve(0.01)
+    np.testing.assert_allclose(model.result(aid), (0.5, 0.0))
 
 
 # -- the ordering contract -------------------------------------------------------------------------

@@ -7,9 +7,8 @@ would.
 
 Nothing here is pedestrian-specific: any navigator can name it, not only a walker.
 
-Needs ``rvo2``, which is an optional extra because it publishes no wheel and must be built from
-source. Without it this model refuses to load, and a world that named it is told so at load time
-rather than quietly navigating without avoidance.
+The solve is RVO2's, ported to Python in :mod:`._orca`; the neighbours are found by a scan, so an
+agent can leave out the ones it ignores (:meth:`OrcaModel.exclude`).
 """
 
 from __future__ import annotations
@@ -19,18 +18,19 @@ import logging
 import numpy as np
 
 from . import NO_AGENT, AvoidanceModel
+from ._orca import Edges, agent_line, new_velocity, obstacle_lines
 
 logger = logging.getLogger(__name__)
 
-#: rvo2 defaults that are not per-agent: how many neighbours to consider, and the time horizon for
-#: static obstacles (shorter than for agents -- a wall will not step aside, so reacting to one far
-#: ahead only makes an agent hug the opposite side of a corridor).
+#: How many of the nearest agents each agent avoids, and the time horizon for static obstacles
+#: (shorter than for agents -- a wall will not step aside, so reacting to one far ahead only makes
+#: an agent hug the opposite side of a corridor).
 _MAX_NEIGHBORS = 10
 _OBSTACLE_HORIZON = 2.0
 
 
 class OrcaModel(AvoidanceModel):
-    """One rvo2 simulation for the world."""
+    """ORCA over every agent of the world, solved agent by agent each step."""
 
     params_schema = (
         "neighbor_dist",
@@ -42,10 +42,11 @@ class OrcaModel(AvoidanceModel):
     )
 
     def __init__(self) -> None:
-        self._sim = None
-        self._dt = 0.002
-        self._agents: dict[int, dict] = {}
-        self._pending_static: list = []
+        self._agents: list[dict] = []
+        self._edges = Edges()
+        self._excluded: dict[int, set[int]] = {}
+        self.neighbor_dist = 4.0
+        self.time_horizon = 3.0
         #: The gap two agents keep passing (m), and how much more for each m/s they close at (s).
         #: ORCA keeps discs apart, so each agent's disc is its radius plus half the clearance plus
         #: ``clearance_time`` times its own speed: two agents keep ``clearance`` and
@@ -55,127 +56,131 @@ class OrcaModel(AvoidanceModel):
         self.clearance_time = 0.06
 
     def configure(self, ctx, params: dict) -> None:
-        try:
-            import rvo2
-        except ImportError as exc:
-            raise ImportError(
-                "the 'orca' avoidance model needs rvo2, the optional extra roqsim_nav[avoidance]. "
-                "It publishes no wheel and builds from source against Cython, which pip's build "
-                "isolation hides, so it installs in two commands: pip install Cython, then pip "
-                "install --no-build-isolation git+https://github.com/sybrenstuvel/Python-RVO2.git. "
-                "A world that must run without a compiler steers its movers with `steer: give_way`, "
-                "the pure-Python model, or with `steer: none`."
-            ) from exc
-        self._dt = float(ctx.model.opt.timestep) if ctx.model is not None else self._dt
+        self.neighbor_dist = float(params.get("neighbor_dist", self.neighbor_dist))
+        self.time_horizon = float(params.get("time_horizon", self.time_horizon))
         self.clearance = float(params.get("clearance", self.clearance))
         self.clearance_time = float(params.get("clearance_time", self.clearance_time))
-        self._sim = rvo2.PyRVOSimulator(
-            self._dt,
-            float(params.get("neighbor_dist", 4.0)),
-            _MAX_NEIGHBORS,
-            float(params.get("time_horizon", 3.0)),
-            _OBSTACLE_HORIZON,
-            float(params.get("radius", 0.3)),
-            float(params.get("max_speed", 1.5)),
-        )
-        for poly in self._pending_static:
-            self._sim.addObstacle(poly)
-        if self._pending_static:
-            self._sim.processObstacles()
-            self._pending_static = []
 
     def add_agent(self, key, *, radius, max_speed, yields, params):
-        if self._sim is None:
-            return NO_AGENT
         params = params or {}
-        aid = self._sim.addAgent(
-            (0.0, 0.0),
-            float(params.get("neighbor_dist", 4.0)),
-            _MAX_NEIGHBORS,
-            float(params.get("time_horizon", 3.0)),
-            _OBSTACLE_HORIZON,
-            float(radius),
-            # A non-yielding agent is pinned from ground truth every step, so its own speed limit is
-            # never used; zero states plainly that ORCA is not to move it.
-            float(max_speed) if yields else 0.0,
-            (0.0, 0.0),
+        aid = len(self._agents)
+        self._agents.append(
+            {
+                "key": key,
+                "radius": float(radius),
+                "disc": float(radius),
+                # A non-yielding agent is set from ground truth every step and never moved here.
+                "max_speed": float(max_speed) if yields else 0.0,
+                "yields": bool(yields),
+                "neighbor_dist": float(params.get("neighbor_dist", self.neighbor_dist)),
+                "time_horizon": float(params.get("time_horizon", self.time_horizon)),
+                "pos": np.zeros(2),
+                "vel": np.zeros(2),
+                "pref": np.zeros(2),
+                "new": np.zeros(2),
+                # Until its first submit an agent is nowhere: it deflects nobody and is not solved.
+                "present": False,
+            }
         )
-        self._agents[aid] = {
-            "key": key,
-            "yields": bool(yields),
-            "pref": np.zeros(2),
-            "radius": float(radius),
-        }
         return aid
 
     def add_static(self, polygons) -> None:
         """CCW footprints; agents stay outside them.
 
         The same polygons the planner rasterized, so local avoidance cannot push an agent through a
-        wall the global plan carefully went around. Queued when called before :meth:`configure`,
-        because a world may declare its movers before its avoidance model.
+        wall the global plan carefully went around.
         """
         polys = [p for p in polygons if len(p) >= 2]
-        if not polys:
-            return
-        if self._sim is None:
-            self._pending_static.extend(polys)
-            return
         for poly in polys:
-            self._sim.addObstacle(poly)
-        self._sim.processObstacles()
-        logger.info("ORCA: %d wall obstacle(s)", len(polys))
+            self._edges.add(poly)
+        if polys:
+            logger.info("ORCA: %d wall obstacle(s)", len(polys))
+
+    def exclude(self, aid, other) -> None:
+        self._excluded.setdefault(aid, set()).add(other)
 
     def submit(self, aid, pos, vel, pref_vel, *, present: bool = True) -> None:
-        if self._sim is None or aid == NO_AGENT:
-            self._agents.setdefault(aid, {})["pref"] = np.asarray(pref_vel, dtype=float)
+        if aid == NO_AGENT:
             return
         agent = self._agents[aid]
         agent["pref"] = np.asarray(pref_vel, dtype=float)
         agent["present"] = present
-        # Position, every step: an agent must be where it really is, not where ORCA last integrated
-        # it to.
-        self._sim.setAgentPosition(aid, (float(pos[0]), float(pos[1])))
+        # Position, every step: an agent is where it really is, not where the last solve would
+        # have moved it.
+        agent["pos"] = np.asarray(pos, dtype=float)[:2].copy()
         speed = float(np.hypot(vel[0], vel[1]))
-        self._sim.setAgentRadius(
-            aid, agent["radius"] + self.clearance / 2.0 + self.clearance_time * speed
-        )
-        if not agent.get("yields", True):
+        agent["disc"] = agent["radius"] + self.clearance / 2.0 + self.clearance_time * speed
+        if not agent["yields"]:
             # Velocity too, but ONLY for an agent this model may not move -- the robot under test, a
-            # scripted prop. For a yielding one it would be catastrophic and silent: `doStep` writes
-            # its answer into the agent's velocity and `getAgentVelocity` is how we read it back, so
-            # overwriting that with the body's measured velocity discards the answer. Every mover
-            # then executes zero and the whole world stands still, while ORCA reports no error and
-            # the agents are plainly registered.
-            self._sim.setAgentVelocity(aid, (float(vel[0]), float(vel[1])))
-        if not present:
-            # Absent entities deflect nobody, exactly as they are seen by no raycaster. Parking the
-            # agent far away is how rvo2 expresses that without deleting and renumbering agents.
-            self._sim.setAgentPosition(aid, (1e6, 1e6))
-            self._sim.setAgentPrefVelocity(aid, (0.0, 0.0))
-            return
-        pref = agent["pref"] if agent.get("yields", True) else np.zeros(2)
-        self._sim.setAgentPrefVelocity(aid, (float(pref[0]), float(pref[1])))
+            # scripted prop. A yielding agent's velocity is the one its last solve chose, as ORCA
+            # needs it: overwriting that with the body's measured velocity makes every agent that
+            # has not yet moved plan from standing, and the world stands still.
+            agent["vel"] = np.asarray(vel, dtype=float)[:2].copy()
 
     def solve(self, dt: float) -> None:
-        if self._sim is not None:
-            self._sim.doStep()
+        agents = self._agents
+        present = [i for i, a in enumerate(agents) if a["present"]]
+        for i in present:
+            agent = agents[i]
+            if not agent["yields"]:
+                continue
+            pos, vel, disc = agent["pos"], agent["vel"], agent["disc"]
+            reach = _OBSTACLE_HORIZON * agent["max_speed"] + disc
+            walls = obstacle_lines(
+                self._edges,
+                self._edges.near(pos, reach * reach),
+                pos,
+                vel,
+                disc,
+                _OBSTACLE_HORIZON,
+            )
+            skip = self._excluded.get(i, ())
+            range_sq = agent["neighbor_dist"] ** 2
+            near = []
+            for j in present:
+                if j == i or j in skip:
+                    continue
+                d = agents[j]["pos"] - pos
+                dist_sq = float(d[0] * d[0] + d[1] * d[1])
+                if dist_sq < range_sq:
+                    near.append((dist_sq, j))
+            near.sort(key=lambda item: item[0])
+            others = [
+                agent_line(
+                    pos,
+                    vel,
+                    disc,
+                    agents[j]["pos"],
+                    agents[j]["vel"],
+                    agents[j]["disc"],
+                    agent["time_horizon"],
+                    dt,
+                )
+                for _, j in near[:_MAX_NEIGHBORS]
+            ]
+            agent["new"] = np.array(new_velocity(walls, others, agent["max_speed"], agent["pref"]))
+        for agent in agents:
+            if agent["yields"]:
+                # What it chose becomes what it moves at, for the others' next solve and its own.
+                agent["vel"] = agent["new"] if agent["present"] else np.zeros(2)
 
     def result(self, aid) -> np.ndarray:
-        agent = self._agents.get(aid, {})
-        pref = agent.get("pref", np.zeros(2))
-        if self._sim is None or aid == NO_AGENT or not agent.get("yields", True):
+        if aid == NO_AGENT:
+            return np.zeros(2)
+        agent = self._agents[aid]
+        if not agent["yields"]:
             # A non-yielding agent executes exactly what it wanted: this model is not allowed to
             # move it, and returning ORCA's answer would do so through the back door.
-            return pref
-        vx, vy = self._sim.getAgentVelocity(aid)
-        return np.array([vx, vy], dtype=float)
+            return agent["pref"]
+        if not agent["present"]:
+            return np.zeros(2)
+        return np.array(agent["new"], dtype=float)
 
     def reset(self) -> None:
-        for agent in self._agents.values():
+        for agent in self._agents:
             agent["pref"] = np.zeros(2)
-        if self._sim is not None:
-            for aid in self._agents:
-                if aid != NO_AGENT:
-                    self._sim.setAgentVelocity(aid, (0.0, 0.0))
-                    self._sim.setAgentPrefVelocity(aid, (0.0, 0.0))
+            agent["vel"] = np.zeros(2)
+            agent["new"] = np.zeros(2)
+            # Nowhere until it is submitted again: a run does not start from where the last one
+            # left its agents.
+            agent["present"] = False

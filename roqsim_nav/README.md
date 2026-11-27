@@ -63,8 +63,8 @@ ORCA is *an* answer, not the answer. `steer:` names one, resolved from
 *preferred velocity in, achievable velocity out* — forces, accelerations and sampled rollouts stay
 inside an implementation. `submit`/`solve`/`result` are three phases rather than one call, so a
 batched model can compute every agent at once and the order plugins appear in a world cannot matter.
-`test_avoidance_contract.py` runs against a **stub** and must pass with `rvo2` uninstalled: if it
-needed ORCA, the interface would have been shaped around ORCA.
+`test_avoidance_contract.py` runs against a **stub**: if it needed ORCA, the interface would have
+been shaped around ORCA.
 
 **Who yields is derived, not configured.** An entity with a navigator that names a model is
 apparatus and gives way. One whose navigator steers by none joins as a non-yielding agent; so does
@@ -73,20 +73,17 @@ hinged door) and that stands on the floor (its lowest geom below 0.1 m: a robot 
 stack, one standing still, a pushed cart, not a tote on a table), as the disc of its extent in the
 plane. Such an agent's state is overwritten from ground truth every tick, its velocity measured
 from where it has been — so the others go round it and it is never pushed by them. One lifted off the floor while it is carried is
-absent. A mover's `ignore` applies to its steering as to its stopping; `orca` cannot leave one
-agent out of another's solve and refuses it by name. Both models keep `clearance` between two discs
-passing (0.24 m), and `clearance_time` more for each m/s they close at (0.06 s): `give_way` on the
-closing speed itself, `orca` by growing each disc by half the clearance and `clearance_time` times its
-own speed, so two keep `clearance_time` times the sum of their speeds -- their closing speed head-on
-and past one standing. A mover's disc is the one its embodiment declares for avoidance
-(`NavOutput.agent_radius`: a walker's is a person's, 0.23 m, whatever `radius` it plans with), or
-else its `radius`, or its measured footprint. A passive agent is the disc its own body reaches; an
-entity nested in another rides inside its carrier's.
+absent. A mover's `ignore` applies to its steering as to its stopping, in both models. Both models
+keep `clearance` between two discs passing (0.24 m), and `clearance_time` more for each m/s they
+close at (0.06 s): `give_way` on the closing speed itself, `orca` by growing each disc by half the
+clearance and `clearance_time` times its own speed, so two keep `clearance_time` times the sum of
+their speeds -- their closing speed head-on and past one standing. A mover's disc is the one its
+embodiment declares for avoidance (`NavOutput.agent_radius`: a walker's is a person's, 0.23 m,
+whatever `radius` it plans with), or else its `radius`, or its measured footprint. A passive agent
+is the disc its own body reaches; an entity nested in another rides inside its carrier's.
 
-`orca` needs `rvo2`, built from source. An extra cannot express its build dependency, so the
-install is two commands: `pip install Cython`, then
-`pip install --no-build-isolation git+https://github.com/sybrenstuvel/Python-RVO2.git`. Without a model
-declared, everyone simply executes what they wanted.
+`orca` is RVO2's solve (van den Berg et al., Apache-2.0), ported to Python with its walls; it needs
+nothing built. Without a model declared, everyone simply executes what they wanted.
 
 Known limit, stated rather than smuggled: to local avoidance an agent is a **disc**. A long cart is
 its circumscribed circle there. The global plan of a body that holds something is not
