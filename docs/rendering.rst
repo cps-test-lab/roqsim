@@ -225,8 +225,9 @@ the views file with its sha256 and its convention, the images, the depth convent
 and per view its size, its intrinsics and pose in roqsim's form, its clip planes and each file with
 its sha256. A renderer that does not give an image asked for, or a posed camera, is refused with the
 reason, before the world compiles where ``--renderer`` names it; nothing is drawn another way.
-``--size``, ``--view``, ``--focus``, ``--camera``, ``--camera-path``, ``--overlay`` and
-``--from``/``--to`` are refused beside ``--views``: the file states every camera, at one moment.
+``--size``, ``--view``, ``--focus``, ``--camera``, ``--camera-path``, ``--overlay``,
+``--from``/``--to``, ``--fps``, ``--speed`` and ``--show`` are refused beside ``--views``: the file
+states every camera, at one moment, and it is drawn into a directory of images.
 
 ``--check`` draws nothing. It says per view, on stderr, how it read the file -- where the camera
 stands, which way it looks and what is up in the world frame, and where the principal point lies in

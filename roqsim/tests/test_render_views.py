@@ -499,6 +499,42 @@ def test_a_renderer_without_an_image_is_refused_before_the_world_compiles(scene,
     assert "does not give image 'depth'" in capsys.readouterr().err  # not "nope.yaml"
 
 
+def test_a_renderer_without_a_posed_camera_is_refused_before_the_world_compiles(
+    scene, tmp_path, capsys
+):
+    from roqsim import render
+
+    path = tmp_path / "unposed.py"
+    path.write_text(
+        "from roqsim.render_api import Renderer, RendererCapabilities\n"
+        "class Unposed(Renderer):\n"
+        "    capabilities = RendererCapabilities()\n"
+    )
+    args = ["nope.yaml", "--views", _views_file(tmp_path), "--out", str(tmp_path / "o")]
+    assert render.main([*args, "--renderer", f"{path}:Unposed"]) == 2
+    assert "cannot give a camera at a given pose" in capsys.readouterr().err
+
+
+def test_a_renderer_that_fails_is_reported_in_one_line(scene, tmp_path, capsys):
+    # A renderer's own refusal or failure (roqsim.render_api.RenderError) is the command's one-line
+    # report and exit 2, as every other refusal, never a traceback.
+    from roqsim import render
+
+    path = tmp_path / "failing.py"
+    path.write_text(
+        "from roqsim.render_api import RenderError, Renderer, RendererCapabilities\n"
+        "class Failing(Renderer):\n"
+        "    capabilities = RendererCapabilities(posed=True, principal_point=True,\n"
+        "                                        non_square_pixels=True)\n"
+        "    def __init__(self, settings=None):\n"
+        "        raise RenderError('no device to draw on')\n"
+    )
+    args = [scene, "--views", _views_file(tmp_path), "--out", str(tmp_path / "o")]
+    assert render.main([*args, "--renderer", f"{path}:Failing"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("roqsim render: ") and "Traceback" not in err
+
+
 @pytest.mark.parametrize(
     "extra",
     [
@@ -506,6 +542,9 @@ def test_a_renderer_without_an_image_is_refused_before_the_world_compiles(scene,
         ["--view", "azimuth=10"],
         ["--camera", "cam"],
         ["--camera-path", "{}"],
+        ["--fps", "10"],
+        ["--speed", "2"],
+        ["--show"],
     ],
 )
 def test_what_views_cannot_be_combined_with_is_refused(extra, scene, tmp_path, capsys):

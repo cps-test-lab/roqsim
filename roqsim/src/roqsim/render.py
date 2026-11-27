@@ -74,6 +74,7 @@ from .models import ModelError
 from .override_options import add_override_options, add_renderer_option, overrides_from_options
 from .presence import entity_root_ids
 from .recording import RecordingError
+from .render_api import RenderError as RendererError
 from .rendering import (
     DEFAULT_RENDERER,
     FrameRenderer,
@@ -1369,6 +1370,9 @@ _NOT_WITH_VIEWS = {
     "overlay": "the images are written as drawn, without loss",
     "start": "a views file is drawn at one moment (--at)",
     "stop": "a views file is drawn at one moment (--at)",
+    "fps": "a views file is drawn into images, not a video",
+    "speed": "a views file is drawn into images, not a video",
+    "show": "a views file is drawn into a directory of images",
 }
 
 
@@ -1443,6 +1447,8 @@ def render_views_target(
                 f"renderer {asked!r} does not give image {', '.join(map(repr, lacking))}; it gives "
                 f"{', '.join(sorted(caps.images))}"
             )
+        if not caps.posed:
+            raise RenderError(f"renderer {asked!r} cannot give a camera at a given pose")
     if not check:
         out.mkdir(parents=True, exist_ok=True)
         if not os.access(out, os.W_OK):
@@ -1722,7 +1728,14 @@ def main(argv: list | None = None) -> int:
                 geomgroup=_parse_geomgroup(parser, args.geomgroup),
                 no_ceiling=args.no_ceiling,
             )
-        except (RenderError, RecordingError, PluginError, ModelError, CaptureError) as err:
+        except (
+            RenderError,
+            RendererError,
+            RecordingError,
+            PluginError,
+            ModelError,
+            CaptureError,
+        ) as err:
             return exit_status.fail("roqsim render", err)
         print(json.dumps(record))
         return 0
