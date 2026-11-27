@@ -558,11 +558,16 @@ Which you want follows from what the mover is *for*:
 
 **Steering goes round everything that moves on the floor**, not only other navigated movers: a
 robot driven by its own stack, one standing still and a pushed cart each join the world's model as
-an agent that does not give way, measured from its state every tick. A pass keeps ``clearance``
-between the two discs (``params: {clearance: 0.24}``, m) and ``clearance_time`` more for each m/s
-they close at (0.06 s). A mover's disc is its ``radius``, or else the one its embodiment
-declares for avoidance (``NavOutput.agent_radius``: a walker's is a person's, 0.23 m, narrower than
-its model's hips), or else its measured footprint; the planner's inflation is not changed by it. ``give_way`` passes a mover crossing its way behind it, on the side it comes
+an agent that does not give way, measured from its state every tick: a thing whose root body moves
+freely (a mocap body, or one on a free joint), not one hinged or sliding in place (a door, a gate,
+a drawer), as a disc of its extent in the plane. A pass keeps ``clearance`` between the two discs
+(``params: {clearance: 0.24}``, m) and ``clearance_time`` more for each m/s they close at (0.06 s):
+``give_way`` on the closing speed itself, ``orca`` by growing each disc by half the clearance and
+``clearance_time`` times its own speed, so two keep ``clearance_time`` times the sum of their speeds
+-- their closing speed head-on and past one standing. A mover's disc is its ``radius``, or else the
+one its embodiment declares for avoidance (``NavOutput.agent_radius``: a walker's is a person's,
+0.23 m, narrower than its model's hips), or else its measured footprint; the planner's inflation is
+not changed by it. ``give_way`` passes a mover crossing its way behind it, on the side it comes
 from, and one standing or going its way on the side away from it; head-on, and for one on its line,
 it gives way to its ``side`` (right by default). ``ignore`` applies to steering as to stopping;
 ``orca`` cannot leave one agent out of another's solve, and a world asking it to is refused.
@@ -592,38 +597,47 @@ corner the mover turns at is not in its way. A thing that moves counts when any 
 visual ones included, reaches up into the mover's own ``obstacle_height`` band: a robot's tower is
 part of the robot, and seeing the tower is seeing the whole robot, while a mat it walks over is not
 in its way. Where it is in the corridor is where its body is, its collidable geoms by their extent:
-a robot's base, a walker's legs and hips, not its arms. What is in the way is what
-reaches past the front of the body: a thing already inside the body that reaches past it is in the
-way at once, and one beside the body -- a walker abreast, a shoulder touching -- is not. What the mover holds by a weld moves with it and is not looked
-for. The same corridor decides holding and setting off, so a mover
+a robot's base, a walker's legs and hips, not its arms. What is in the way is what reaches past
+the front of the body, along whichever side of the body it is going: a thing already inside the
+body that reaches past it is in the way at once, and one beside the body -- a walker abreast, a
+shoulder touching -- is not. Nor is what goes along the way at least 0.8 times as fast as the mover:
+walkers side by side, or one a step behind another, do not hold each other up. A thing's velocity
+is measured from where its root body has been over 0.3 s, so one whose pose is written has one.
+What the mover holds by a weld moves with it and is not looked for. The same corridor decides
+holding and setting off, so a mover
 never sets off to pass something closer than it would have stopped for; one held for a robot that
 drives across its way and on waits until the robot's body has left the corridor, and
 ``clear_time`` after.
 
+An embodiment can declare ``avoidance:`` keys for what it moves (``NavOutput.avoidance_defaults``);
+a world's own key wins, and the navigator logs each value it takes from its output. The ``walker``
+output declares a corridor a person's body wide, ``width: 0.46``, so a walker abreast of another at
+a person's spacing is beside it, not in its way.
+
 **How fast it meets it** is ``decel``. Without it (the default) a mover walks at its speed until
 something is within ``lookahead`` and then stands at once, as above. With it, the speed follows the
 gap ahead: the probe looks ``horizon`` seconds ahead at its speed (never less than ``lookahead``),
-and the mover slows on the stop that ``decel`` allows, to stand ``stop_gap`` short of what stands or
-moves along its way and ``wait_gap`` short of a mover crossing ahead. A mover crossing that will have
-left the corridor before it gets there is passed without slowing; a thing's velocity is measured
-from where it has been, so a robot whose pose a plugin writes has one too. Once the way has cleared
-and ``clear_time`` has passed, the speed rises to the set speed with the time constant ``tau``.
+and the speed is never more than that of a stop at ``decel`` short of what is in the way, so the
+mover slows on that stop's curve from as far out as it needs, to stand ``stop_gap`` short of what
+stands or comes the other way and ``wait_gap`` short of a mover crossing ahead. Something that
+appears inside that stopping distance, or a crosser that stops being passable, drops the speed to
+what the gap then allows within a tick. A mover crossing that will have left the corridor before it
+gets there is passed without slowing; one moving along the way is followed, at its speed and that of
+a stop in the gap left, and never stood for. Once the way has cleared and ``clear_time`` has passed,
+the speed rises to the set speed with the time constant ``tau``.
 
 .. code-block:: yaml
 
    avoidance:
      horizon: 3.0        # s: how far ahead it looks, at its speed (0: lookahead only)
      decel: 1.0          # m/s^2: the speed follows the gap ahead (0: stands at once)
-     stop_gap: 0.3       # m: stands this short of what stands or moves along its way
+     stop_gap: 0.3       # m: stands this short of what stands or comes the other way
      wait_gap: 0.85      # m: ...and this short of a mover crossing ahead (default: stop_gap)
      clear_time: 0.39    # s: the way stays clear this long before it walks off
      tau: 0.54           # s: walking off, its speed rises with this time constant (0: at once)
 
-An embodiment can declare these for what it moves (``NavOutput.avoidance_defaults``): the ``walker``
-output declares the values above, and a corridor a person's body wide (``width: 0.46``) -- a walker
-abreast of it at a person's spacing is beside it, not in its way -- so a walker with ``stop: true``
-meets what is in its way at a person's pace without its world writing any of them. A world's own key wins, and the navigator logs
-each value it takes from its output.
+The ``walker`` output declares the values above too, so a walker with ``stop: true`` meets what is in
+its way at a person's pace without its world writing any of them.
 
 ``reroute`` is the opt-in that changes that: it remembers where it was stopped as a disc that
 expires, and plans around it. The memory is what makes it work -- the grid is static, so a mover that
