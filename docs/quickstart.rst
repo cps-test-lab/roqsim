@@ -360,6 +360,7 @@ from any camera, at any resolution, as a still or a video — without re-running
    roqsim render --state run.mcap --at 12.5 --out t.png # one moment
    roqsim render --state run.mcap --out run.webm        # the whole run as video
    roqsim render --state run.mcap --renderer my_renderer --out run.mp4  # drawn through another renderer
+   roqsim render world.yaml --views views.yaml --out views/   # real cameras: a pose and intrinsics each (see rendering)
 
 A recording is rebuilt from the world it ran in, so an override changes only how it is drawn: the
 camera (``sim.view``) and the renderer with its settings (``--renderer``, ``sim.renderers.<name>``).

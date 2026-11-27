@@ -30,7 +30,7 @@ Arrays travel as their bytes, never through JSON::
     -> open    {scene: {cameras, body_names, moving, settings}}  + the scene's blobs (scene.glb)
                                                           <- opened
     -> render  {sim_time, step, requests: [{id, width, height, model, fovy, intrinsics, near, far,
-                images, pos, quat, geomgroup, bodies}]}
+                images, pos, quat, geomgroup, bodies, posed}]}
                + blobs xpos, xquat, model/geom_rgba, model/geom_group, model/flex_rgba,
                  model/flex_group
                                                           <- frames {frames: [{id, sim_time, step}]}
@@ -45,7 +45,9 @@ which project through ``fovy`` (:attr:`roqsim.render_api.CameraSpec.intrinsics`)
 camera whose principal point is off centre, or whose pixels are not square, is refused at load, or when a tool draws it,
 unless the renderer declares ``principal_point``, or ``non_square_pixels``; ``geomgroup`` is ``null`` (every group) or the groups the
 camera draws, for a server that declares ``geom_groups``; ``bodies`` is ``all``, or ``moving`` for
-the moving bodies alone, for a server that declares ``moving_only``. A frame answers with the request's
+the moving bodies alone, for a server that declares ``moving_only``; ``posed`` is true for a camera
+with no camera of the model behind it, drawn at ``pos``/``quat`` with ``intrinsics`` alone
+(:attr:`roqsim.render_api.CameraSpec.posed`), sent only to a server that declares ``posed``. A frame answers with the request's
 ``sim_time`` and ``step`` and images of the request's size in the formats
 :data:`roqsim.render_api.IMAGE_FORMATS` states; the service refuses any other. The scene, sent
 once, is the world as glTF 2.0 written by ``roqsim export gltf``'s writer (:mod:`roqsim.export_gltf`), so there is one walk of the scene, and
@@ -284,6 +286,11 @@ class SocketRenderer(Renderer):
             "whether it draws the moving bodies alone for a request that asks (`bodies: moving`); "
             "a camera that asks is refused at load otherwise",
         ),
+        "posed": Setting(
+            False,
+            "whether it draws a posed camera (`posed: true`: at the request's pos, quat and "
+            "intrinsics, with no camera of the model); a posed camera is refused otherwise",
+        ),
     }
 
     @classmethod
@@ -304,6 +311,7 @@ class SocketRenderer(Renderer):
             principal_point=bool(merged["principal_point"]),
             non_square_pixels=bool(merged["non_square_pixels"]),
             moving_only=bool(merged["moving_only"]),
+            posed=bool(merged["posed"]),
         )
 
     @classmethod
@@ -341,7 +349,13 @@ class SocketRenderer(Renderer):
             value = settings.get(key, [])
             if not isinstance(value, list) or set(value) - set(allowed):
                 errors.append(f"'{key}' is a list of {', '.join(allowed)}, got {value!r}")
-        for key in ("deterministic", "geom_groups", "principal_point", "non_square_pixels"):
+        for key in (
+            "deterministic",
+            "geom_groups",
+            "principal_point",
+            "non_square_pixels",
+            "posed",
+        ):
             if not isinstance(settings.get(key, False), bool):
                 errors.append(f"'{key}' must be true or false, got {settings[key]!r}")
         for key in ("connect_timeout_s", "timeout_s", "open_timeout_s"):
@@ -389,6 +403,7 @@ class SocketRenderer(Renderer):
                     "near": c.near,
                     "far": c.far,
                     "images": sorted(c.images),
+                    "posed": c.posed,
                 }
                 for c in scene.cameras
             ],
@@ -520,6 +535,7 @@ class SocketRenderer(Renderer):
                     if r.camera.geomgroup is None
                     else [int(g) for g in r.camera.geomgroup],
                     "bodies": r.camera.bodies,
+                    "posed": r.camera.posed,
                 }
                 for r in requests
             ],
