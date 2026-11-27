@@ -1056,6 +1056,95 @@ def test_a_run_after_one_that_ended_held_walks_off_as_a_fresh_one(tmp_path):
         engine.shutdown()
 
 
+# -- while a model steers the mover, the probe is the last resort ------------------------------------
+def _probe_with(tmp_path, xy):
+    """The cart's probe, with the low robot placed at ``xy`` relative to the cart, after one step."""
+    away = {"pose": {"position": {"x": 0.0, "y": 8.0, "z": 0.0}}}
+    engine = Engine(_held_world(tmp_path, LOW_ROBOT, blocker_spawn=away, avoidance=PACE))
+    engine.setup()
+    engine.reset()
+    engine.step()
+    _place(engine, _xy(engine) + np.asarray(xy))
+    engine.step()
+    return engine, _navigator(engine)._caution
+
+
+def test_steered_it_is_not_held_for_a_thing_that_reaches_into_its_body(tmp_path):
+    engine, probe = _probe_with(tmp_path, (0.15, 0.35))  # the base 0.1 m into the cart's flank
+    try:
+        cart = _xy(engine)
+        assert probe.check(engine.ctx, cart, 0.0, (0.8, 0.0), steering=False)
+        probe.reset()
+        assert not probe.check(engine.ctx, cart, 0.0, (0.8, 0.0), steering=True)
+    finally:
+        engine.shutdown()
+
+
+def test_steered_it_looks_only_lookahead_ahead(tmp_path):
+    """1.5 m ahead of the front: within the horizon at 0.8 m/s (2.4 m), past lookahead (1.0 m)."""
+    engine, probe = _probe_with(tmp_path, (0.25 + 0.2 + 1.5, 0.0))
+    try:
+        cart = _xy(engine)
+        probe.check(engine.ctx, cart, 0.0, (0.8, 0.0), steering=False)
+        assert probe.gap == pytest.approx(1.5, abs=0.02), "not steered, it saw nothing ahead"
+        probe.reset()
+        probe.check(engine.ctx, cart, 0.0, (0.8, 0.0), steering=True)
+        assert probe.gap is None and probe.limit is None, "steered, it looked past lookahead"
+    finally:
+        engine.shutdown()
+
+
+def test_steered_it_stands_stop_gap_short_of_a_mover_crossing_not_wait_gap(tmp_path):
+    engine, probe = _probe_with(tmp_path, (0.25 + 0.2 + 0.6, 0.0))  # 0.6 m ahead of the front
+    try:
+        things = [
+            {
+                "dist": 0.6,
+                "v_lat": -0.3,
+                "v_along": 0.0,
+                "lat_lo": -0.2,
+                "lat_hi": 0.2,
+                "points": [],
+            }
+        ]
+        _, _, held = probe._grade(things, 0.8)
+        assert held, "it does not wait for a mover crossing 0.6 m ahead"
+        _, _, held = probe._grade(things, 0.8, steering=True)
+        assert not held, "steered, it waits wait_gap short of a mover crossing"
+    finally:
+        engine.shutdown()
+
+
+#: A box carried at hip height: off the floor, so no agent the model steers round, but within the
+#: cart's obstacle band, so its probe sees it.
+CARRIED = """<mujoco model="carried">
+  <worldbody><body name="base"><geom name="g" type="box" size=".15 .15 .05" pos="0 0 .4"/></body>
+  </worldbody>
+</mujoco>"""
+
+
+def test_a_navigator_whose_model_steers_it_gives_its_probe_only_lookahead(tmp_path):
+    """The navigator tells its probe when its model steers: past ``lookahead``, what is ahead is the
+    model's, not the probe's. A carried box some 1.5 m ahead of the cart's front, within the horizon
+    at 0.8 m/s, is no agent, so the model leaves the cart's way straight at it, and only the probe's
+    reach decides whether the cart slows for it yet."""
+    ahead = {"pose": {"position": {"x": START[0] + 0.25 + 0.2 + 1.5, "y": START[1], "z": 0.0}}}
+    world = _held_world(
+        tmp_path, CARRIED, blocker_spawn=ahead, avoidance={**PACE, "steer": "give_way"}
+    )
+    engine = Engine(world)
+    engine.setup()
+    engine.reset()
+    try:
+        _run(engine, 0.1)  # two navigator ticks
+        probe = _navigator(engine)._caution
+        assert probe.gap is None and probe.limit is None, (
+            f"steered, its probe saw {probe.gap} m ahead and set {probe.limit} m/s"
+        )
+    finally:
+        engine.shutdown()
+
+
 def test_a_route_given_to_a_held_mover_walks_off_as_a_fresh_one(tmp_path):
     """A new route starts as one never held: the pace a hold left behind does not carry into it."""
     pace = {**PACE, "tau": 0.5}

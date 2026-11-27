@@ -637,6 +637,13 @@ the speed rises to the set speed with the time constant ``tau``.
      clear_time: 0.39    # s: the way stays clear this long before it walks off
      tau: 0.54           # s: walking off, its speed rises with this time constant (0: at once)
 
+While a model steers the mover (``steer``), the probe looks only ``lookahead`` ahead, whatever
+``horizon`` says, and stands ``stop_gap`` short of a mover crossing as of anything else, not
+``wait_gap``, and never holds it for a thing already reaching into its body, which the model is
+steering it away from: the model deals with what is further and with who passes whom, and the probe
+is the last resort for what steering has not cleared, so it does not stop a pass the model has under
+way.
+
 The ``walker`` output declares the values above too, so a walker with ``stop: true`` meets what is in
 its way at a person's pace without its world writing any of them.
 
