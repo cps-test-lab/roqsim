@@ -6,6 +6,9 @@ Agents are moved by the velocity the model chose, as a navigator's body would fo
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -158,36 +161,71 @@ SCENES = {
 }
 
 
-@pytest.mark.parametrize("scene", sorted(SCENES))
-def test_it_chooses_what_rvo2_chooses(scene):
-    rvo2 = pytest.importorskip("rvo2")
+RADIUS, MAX_SPEED, HORIZON, STEPS = 0.23, 1.5, 3.0, int(6.0 / DT)
+
+
+def rvo2_trace(scene):
+    """rvo2's velocity for every agent at every step of ``scene``, moved by its own choice."""
+    import rvo2  # noqa: PLC0415 - only where it is installed
+
     walls, agents = SCENES[scene]
-    radius, max_speed, horizon = 0.23, 1.5, 3.0
+    sim = rvo2.PyRVOSimulator(DT, 4.0, 10, HORIZON, 2.0, RADIUS, MAX_SPEED)
+    for poly in walls:
+        sim.addObstacle(poly)
+    if walls:
+        sim.processObstacles()
+    for pos, _ in agents:
+        sim.addAgent(pos, 4.0, 10, HORIZON, 2.0, RADIUS, MAX_SPEED, (0.0, 0.0))
+    pos = [np.array(p, dtype=float) for p, _ in agents]
+    trace = []
+    for _ in range(STEPS):
+        for i, (_, pref) in enumerate(agents):
+            sim.setAgentPosition(i, tuple(pos[i]))
+            sim.setAgentPrefVelocity(i, pref)
+        sim.doStep()
+        step = [list(sim.getAgentVelocity(i)) for i in range(len(agents))]
+        for i, v in enumerate(step):
+            pos[i] = pos[i] + np.array(v) * DT
+        trace.append(step)
+    return trace
+
+
+def _differs_from(scene, trace):
+    """The largest difference from ``trace`` of the port's velocity, along rvo2's own path."""
+    walls, agents = SCENES[scene]
     ours = _model(clearance=0.0, clearance_time=0.0)
-    theirs = rvo2.PyRVOSimulator(DT, 4.0, 10, horizon, 2.0, radius, max_speed)
     for poly in walls:
         ours.add_static([poly])
-        theirs.addObstacle(poly)
-    if walls:
-        theirs.processObstacles()
-    ids = []
-    for pos, _ in agents:
-        ours.add_agent("x", radius=radius, max_speed=max_speed, yields=True, params={})
-        ids.append(theirs.addAgent(pos, 4.0, 10, horizon, 2.0, radius, max_speed, (0.0, 0.0)))
+    for _ in agents:
+        ours.add_agent("x", radius=RADIUS, max_speed=MAX_SPEED, yields=True, params={})
     pos = [np.array(p, dtype=float) for p, _ in agents]
     worst = 0.0
-    for _ in range(int(6.0 / DT)):
+    for step in trace:
         for i, (_, pref) in enumerate(agents):
             ours.submit(i, pos[i], np.zeros(2), pref)
-            theirs.setAgentPosition(ids[i], tuple(pos[i]))
-            theirs.setAgentPrefVelocity(ids[i], pref)
         ours.solve(DT)
-        theirs.doStep()
-        for i in range(len(agents)):
-            v = ours.result(i)
-            worst = max(worst, float(np.abs(v - np.array(theirs.getAgentVelocity(ids[i]))).max()))
+        for i, v in enumerate(step):
+            v = np.array(v)
+            worst = max(worst, float(np.abs(ours.result(i) - v).max()))
+            # Both go on from RVO2's choice, so a difference cannot carry into the next step.
+            ours._agents[i]["vel"] = v
             pos[i] = pos[i] + v * DT
+    return worst
+
+
+@pytest.mark.parametrize("scene", sorted(SCENES))
+def test_it_chooses_what_rvo2_chose(scene):
+    """Against rvo2's velocities, recorded in ``data/orca_rvo2.json`` (``data/orca_rvo2.py``)."""
+    trace = json.loads((Path(__file__).parent / "data" / "orca_rvo2.json").read_text())[scene]
+    worst = _differs_from(scene, trace)
     # RVO2 solves in single precision.
+    assert worst < 1e-3, f"{scene}: differs from rvo2 by up to {worst:.2e} m/s"
+
+
+@pytest.mark.parametrize("scene", sorted(SCENES))
+def test_it_chooses_what_rvo2_chooses(scene):
+    pytest.importorskip("rvo2")
+    worst = _differs_from(scene, rvo2_trace(scene))
     assert worst < 1e-3, f"{scene}: differs from rvo2 by up to {worst:.2e} m/s"
 
 

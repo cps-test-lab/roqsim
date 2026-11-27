@@ -102,7 +102,8 @@ Build them locally with `make doc` (or `make view-doc`).
 
 ## Licensing
 
-roqsim's own code is **Apache-2.0** (see [LICENSE](LICENSE)).
+roqsim's own code is **Apache-2.0** (see [LICENSE](LICENSE)); its ORCA solve is ported from the RVO2
+Library, Apache-2.0 as well, credited in [NOTICE](NOTICE).
 
 Vendored third-party assets keep their own terms, and some of those terms **require attribution when
 you redistribute**. The authoritative records are the `THIRD_PARTY.md` file in each package, the

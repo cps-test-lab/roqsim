@@ -17,7 +17,7 @@ import logging
 
 import numpy as np
 
-from . import AvoidanceModel
+from . import NO_AGENT, AvoidanceModel
 from ._orca import Edges, agent_line, new_velocity, obstacle_lines
 
 logger = logging.getLogger(__name__)
@@ -100,6 +100,8 @@ class OrcaModel(AvoidanceModel):
         self._excluded.setdefault(aid, set()).add(other)
 
     def submit(self, aid, pos, vel, pref_vel, *, present: bool = True) -> None:
+        if aid == NO_AGENT:
+            return
         agent = self._agents[aid]
         agent["pref"] = np.asarray(pref_vel, dtype=float)
         agent["present"] = present
@@ -163,6 +165,8 @@ class OrcaModel(AvoidanceModel):
                 agent["vel"] = agent["new"] if agent["present"] else np.zeros(2)
 
     def result(self, aid) -> np.ndarray:
+        if aid == NO_AGENT:
+            return np.zeros(2)
         agent = self._agents[aid]
         if not agent["yields"]:
             # A non-yielding agent executes exactly what it wanted: this model is not allowed to
@@ -177,3 +181,6 @@ class OrcaModel(AvoidanceModel):
             agent["pref"] = np.zeros(2)
             agent["vel"] = np.zeros(2)
             agent["new"] = np.zeros(2)
+            # Nowhere until it is submitted again: a run does not start from where the last one
+            # left its agents.
+            agent["present"] = False

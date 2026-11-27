@@ -2,10 +2,11 @@
 
 A port of the RVO2 Library's ``Agent::computeNewVelocity`` and ``linearProgram1``-``3`` (van den
 Berg, Guy, Lin, Manocha, "Reciprocal n-body collision avoidance", ISRR 2009; Copyright 2008
-University of North Carolina at Chapel Hill, Apache License 2.0), in plain Python floats. The
-neighbour search is not ported: RVO2's k-d trees answer "which agents and edges are near", which a
-scan answers too for the handful of movers a world has, and a scan can leave out what an agent
-ignores.
+University of North Carolina at Chapel Hill, Apache License 2.0), in plain Python floats. Its k-d
+trees are not ported: a scan finds the agents and edges near an agent, for the handful of movers a
+world has, and can leave out what an agent ignores. RVO2's obstacle tree also splits every edge
+another edge's line crosses, at a vertex it takes as convex; here an edge stays whole, so where
+walls meet or overlap an agent can choose another velocity than RVO2's, as clear of the walls.
 
 A velocity constraint is a directed line ``(px, py, dx, dy)``; the permitted half-plane is to its
 left.
