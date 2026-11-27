@@ -1164,6 +1164,20 @@ def _crosser(cart, ahead, left, speed=0.3):
     }
 
 
+def test_a_slow_crosser_is_taken_in_turn_not_stood_short_of(tmp_path):
+    """Drifting across its way at 0.07 m/s, it is still a crosser: the cart, at the crossing long
+    before it, walks on rather than standing short of it as of a thing standing."""
+    engine, probe = _probe_with(tmp_path, (0.0, 8.0))
+    try:
+        cart = _xy(engine)
+        _, _, held = probe._grade(
+            [_crosser(cart, 0.75, 0.35, speed=0.07)], 0.8, origin=cart, heading=0.0
+        )
+        assert not held and probe.limit is None, f"it slowed to {probe.limit} m/s for it"
+    finally:
+        engine.shutdown()
+
+
 def test_of_two_crossing_the_one_that_reaches_the_crossing_first_goes_first(tmp_path):
     """At 0.8 m/s, within wait_gap of a thing crossing at 0.3 m/s: the cart walks on where it reaches
     the crossing point well before the thing does, and waits where the thing gets there first;
@@ -1184,6 +1198,36 @@ def test_of_two_crossing_the_one_that_reaches_the_crossing_first_goes_first(tmp_
         mirrored["lat_lo"], mirrored["lat_hi"] = -0.55, -0.15
         _, _, held = probe._grade([mirrored], 0.8, origin=cart, heading=0.0)
         assert held, "a tie with a thing on its right: the thing comes from its right, and goes"
+    finally:
+        engine.shutdown()
+
+
+def test_a_route_given_to_a_held_mover_walks_off_as_a_fresh_one(tmp_path):
+    """A new route starts as one never held: the pace a hold left behind does not carry into it."""
+    pace = {**PACE, "tau": 0.5}
+
+    def first_half_second(engine):
+        start = _xy(engine)[0]
+        _run(engine, 0.5)
+        return _xy(engine)[0] - start
+
+    fresh = Engine(_held_world(tmp_path / "a", LOW_ROBOT, avoidance=pace))
+    fresh.setup()
+    fresh.reset()
+    try:
+        walked_fresh = first_half_second(fresh)
+    finally:
+        fresh.shutdown()
+    engine = Engine(_held_world(tmp_path / "b", LOW_ROBOT, avoidance=pace))
+    engine.setup()
+    engine.reset()
+    try:
+        _run(engine, 8.0)
+        assert _navigator(engine)._caution.blocked, "it was not held"
+        _place(engine, (0.0, 8.0))
+        _navigator(engine).send_goals([GOAL])
+        engine.step()  # the route is applied on the next tick
+        assert first_half_second(engine) == pytest.approx(walked_fresh, abs=0.02)
     finally:
         engine.shutdown()
 
