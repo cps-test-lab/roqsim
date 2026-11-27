@@ -1,6 +1,6 @@
 """A walker that held for a robot sets off again only when the corridor it holds for is clear.
 
-The encounter: a walker with ``avoidance: {steer: none, stop: true}`` holds for a
+The encounter: a walker with ``avoidance: {steer: none, stop: true, sidestep: false}`` holds for a
 robot in its way, and the robot comes to stand beside its way, 40 degrees off its heading and close.
 The robot is a TurtleBot's shape: a base lower than the walker's obstacle band and above it only a
 lidar and a camera bracket, a few centimetres across. Standing so, its base is in the walker's way.
@@ -50,7 +50,8 @@ def _engine(tmp_path):
                             "output": "walker",
                             "speed": 0.5,
                             "goals": [[4.0, START[1]]],
-                            "avoidance": {"steer": "none", "stop": True},
+                            # a walker that holds: stepping round is test_walker_sidestep's
+                            "avoidance": {"steer": "none", "stop": True, "sidestep": False},
                         }
                     }
                 ],

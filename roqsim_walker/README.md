@@ -85,8 +85,10 @@ legs. A `floorplan` mesh adds its own walls the same way.
 local model (pure Python, no extra): it steers round the robot and other walkers, and never stops for
 them. `stop: true` makes it look ahead and meet what is in its way at a person's pace: the walker
 output declares the probe's `width`, `horizon`, `decel`, `stop_gap`, `wait_gap`, `clear_time` and
-`tau` (`WALKER_AVOIDANCE`), which `roqsim_nav`'s docs describe; a world's own key wins. For ORCA, use
-`steer: orca` and install `rvo2` the way `roqsim_nav`'s README gives it.
+`tau` (`WALKER_AVOIDANCE`), and with `steer: none` it steps aside round what stands in its route and
+back (`sidestep`; `sidestep: false` keeps it standing on its route), all of which `roqsim_nav`'s
+docs describe; a world's own key wins. For ORCA, use `steer: orca` and install `rvo2` the way
+`roqsim_nav`'s README gives it.
 
 ### Goals at runtime
 

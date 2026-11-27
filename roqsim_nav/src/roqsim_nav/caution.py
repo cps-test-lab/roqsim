@@ -92,7 +92,7 @@ _MAX_LEGS = 4
 _ACROSS = np.linspace(-1.0, 1.0, 5)
 
 #: Slower than this across the corridor, a thing in it is standing or moving along it, not crossing.
-_CROSSING = 0.1
+_CROSSING = 0.05
 
 #: How far back a thing's velocity is measured: its own parts move as it walks (a walker's legs),
 #: and a velocity taken over one tick would read a stride as a dash.
@@ -167,6 +167,8 @@ class CautionProbe:
         self.tau = float(cfg.get("tau", 0.0))
         #: With ``decel``: the speed the gap ahead allows this tick (m/s), or ``None`` for any.
         self.limit: float | None = None
+        #: ``(sim time, *_moving())`` of the tick last looked at.
+        self._tick: tuple | None = None
         #: How long a blockage is treated as traffic that will clear. While the mover is inside
         #: this window it holds AND its progress clock is rebased, so waiting for a robot to pass
         #: never talks it into a recovery. Past it, the blockage is treated as something that is not
@@ -307,6 +309,7 @@ class CautionProbe:
         self.blocked = False
         self.gap = None
         self.limit = None
+        self._tick = None
         self.blocker_xy = None
         self.blocker_points = []
         self._front = None  # measured again at the run's first look
@@ -367,7 +370,7 @@ class CautionProbe:
         )
         self.limit = None
         if graded:
-            gap, points, hold = self._grade(things, speed, steering)
+            gap, points, hold = self._grade(things, speed, steering, origin_xy, heading)
         else:
             hold = gap is not None
         self.gap = gap
@@ -428,7 +431,31 @@ class CautionProbe:
                 self._radius = max(self._radius, d + float(model.geom_rbound[g]))
         return self._radius
 
-    def _grade(self, things, speed: float, steering: bool = False):
+    def _first(self, t, origin, heading: float, speed: float) -> bool:
+        """Whether the mover reaches the point where its way and a crossing thing's meet first.
+
+        The one slightly ahead goes first, as between two people crossing; within 0.1 s of each
+        other, the one coming from the other's right does.
+        """
+        h = np.array([math.cos(heading), math.sin(heading)])
+        v = np.asarray(t["v"], dtype=float)
+        sv = float(np.linalg.norm(v))
+        rel = np.asarray(t["xy"], dtype=float) - np.asarray(origin, dtype=float)
+        cross = h[0] * v[1] - h[1] * v[0]
+        if sv < 1e-6 or abs(cross) < 1e-6 * sv:
+            return False
+        # origin + s h = xy + u v
+        s = (rel[0] * v[1] - rel[1] * v[0]) / cross
+        u = (rel[0] * h[1] - rel[1] * h[0]) / cross
+        if s < 0.0 or u < 0.0:
+            return False
+        mine, theirs = s / max(speed, 1e-6), u
+        if abs(mine - theirs) > 0.1:
+            return mine < theirs
+        # a tie: it goes first if it comes from the mover's right
+        return float(h[0] * rel[1] - h[1] * rel[0]) > 0.0
+
+    def _grade(self, things, speed: float, steering: bool = False, origin=None, heading=0.0):
         """``(gap, points, hold)`` for a speed that follows the gap ahead, and :attr:`limit`.
 
         A thing crossing the corridor that will have left it before the mover gets there is passed
@@ -453,6 +480,10 @@ class CautionProbe:
                 # It has left when its trailing edge is past the far side of the corridor.
                 out = (half - t["lat_lo"]) / v_lat if v_lat > 0 else (t["lat_hi"] + half) / -v_lat
                 if out < t["dist"] / max(speed, 1e-6):
+                    continue
+                if not steering and self._first(t, origin, heading, speed):
+                    # It will cross where the mover is going after the mover has: the mover passes
+                    # first, and it is for the one crossing to wait.
                     continue
             v_along = t["v_along"]
             if not crossing and v_along > _CROSSING:
@@ -480,7 +511,15 @@ class CautionProbe:
         return gap, points, hold
 
     def _ahead(
-        self, ctx, origin_xy, heading: float, path, reach: float, now: float = 0.0, speed=None
+        self,
+        ctx,
+        origin_xy,
+        heading: float,
+        path,
+        reach: float,
+        now: float = 0.0,
+        speed=None,
+        width=None,
     ):
         """``(gap, points, things)``: what lies in the corridor ahead, within ``reach`` of the front.
 
@@ -493,7 +532,7 @@ class CautionProbe:
         velocity across the corridor there and along it (``v_lat``, ``v_along``) and its points.
         With ``speed``, what goes along the way at least 0.8 times as fast is left out.
 
-        The corridor is ``width`` across and spans the height of the mover's own body, from its
+        The corridor is ``width`` across (the probe's own unless given) and spans the height of the mover's own body, from its
         bottom (the floor, for a mover standing on it) to its top. Its first leg runs from the
         front of the mover's body along ``heading``, or toward the first point of ``path`` when
         that is within a right angle of the heading; it then follows ``path`` point to point, up to
@@ -504,48 +543,13 @@ class CautionProbe:
         more than a millimetre and its thing reaches above the floor of the mover's obstacle band.
         """
         model, data = ctx.model, ctx.data
-        own = self._body
-        body = own[(model.geom_contype[own] | model.geom_conaffinity[own]) > 0]
-        if body.size == 0:
-            body = own
-        others, owners = self._candidates(model)
-        if body.size == 0 or others.size == 0:
-            return None, [], []
-        visible = raycast.VISIBLE_GROUPS[model.geom_group[others]] > 0
-        others, owners = others[visible], owners[visible]
-        held = _held_bodies(model, data, self._body)
-        if held:
-            keep = ~np.isin(model.geom_bodyid[others], list(held))
-            others, owners = others[keep], owners[keep]
-        if others.size == 0:
-            return None, [], []
         start = np.array([float(origin_xy[0]), float(origin_xy[1])])
-        floor = np.array([start[0], start[1], 0.0])
-        half = self.width / 2.0
-        # The things that reach into the band: a thing below its floor is walked or driven over.
-        world = np.eye(3)
-        wc, wr = _extents(model, data, others, world, floor)
-        tops = {}
-        for o, top in zip(owners.tolist(), (wc[:, 2] + wr[:, 2]).tolist(), strict=True):
-            tops[o] = max(tops.get(o, -np.inf), top)
-        counts = np.array([tops[o] > self.band[0] + _TOUCH for o in owners.tolist()])
-        # Where each thing in the band is, every tick, for its velocity: where its root body is, not
-        # the middle of its geoms, which a walker's swinging arms move about.
-        velocity = {}
-        for o in set(owners[counts].tolist()):
-            velocity[o] = self._velocity(o, data.xpos[self._owner_body[o]][:2], now)
-        for o in list(self._track):
-            if o not in velocity:
-                del self._track[o]
-        others, owners = others[counts], owners[counts]
-        # Where a thing is in the corridor is where its body is, what can collide: a robot's base,
-        # a walker's legs and hips, not its swinging arms. A thing nothing of which collides is
-        # where its visible geoms are.
-        solid = (model.geom_contype[others] | model.geom_conaffinity[others]) > 0
-        has_solid = {o for o, sd in zip(owners.tolist(), solid.tolist(), strict=True) if sd}
-        keep = solid | ~np.isin(owners, list(has_solid))
-        others, owners = others[keep], owners[keep]
-        if others.size == 0:
+        half = (self.width if width is None else float(width)) / 2.0
+        if self._tick is None or self._tick[0] != now:
+            # What moves, where it is and how fast, once a tick however often it is looked at.
+            self._tick = (now, *self._moving(model, data, now))
+        _, body, others, owners, velocity = self._tick
+        if body.size == 0 or others.size == 0:
             return None, [], []
         legs = self._legs(start, heading, path)
         best, points, things = None, [], {}
@@ -571,7 +575,9 @@ class CautionProbe:
                 lo = np.array([lo_x, -half, z_lo])
                 hi = np.array([end, half, z_hi])
                 meets = np.all((c + r > lo + _TOUCH) & (c - r < hi - _TOUCH), axis=1)
-                meets &= ~_apart(model, data, others, a, axes, lo, hi)
+                if meets.any():
+                    near = np.flatnonzero(meets)
+                    meets[near] = ~_apart(model, data, others[near], a, axes, lo, hi)
             else:
                 meets = np.zeros(len(others), dtype=bool)
             if speed is not None and meets.any():
@@ -603,6 +609,8 @@ class CautionProbe:
                         "lat_hi": lat_hi if t is None else max(lat_hi, t["lat_hi"]),
                         "v_lat": float(velocity[o] @ axes[1, :2]),
                         "v_along": float(velocity[o] @ axes[0, :2]),
+                        "xy": np.array(self._track[o][-1][1]),
+                        "v": np.array(velocity[o]),
                         "points": mine + ([] if t is None else t["points"]),
                     }
                 else:
@@ -651,6 +659,51 @@ class CautionProbe:
             seen.pop(0)
         t0, p0 = seen[0]
         return (seen[-1][1] - p0) / (now - t0) if now - t0 > 1e-6 else np.zeros(2)
+
+    def _moving(self, model, data, now: float):
+        """``(body, others, owners, velocity)`` this tick: the mover's own collidable geoms, the
+        geoms of what moves and counts (in the band, visible, not held, its body's), the thing each
+        belongs to, and each thing's velocity."""
+        own = self._body
+        body = own[(model.geom_contype[own] | model.geom_conaffinity[own]) > 0]
+        if body.size == 0:
+            body = own
+        others, owners = self._candidates(model)
+        if body.size == 0 or others.size == 0:
+            return body, others, owners, {}
+        visible = raycast.VISIBLE_GROUPS[model.geom_group[others]] > 0
+        others, owners = others[visible], owners[visible]
+        held = _held_bodies(model, data, self._body)
+        if held:
+            keep = ~np.isin(model.geom_bodyid[others], list(held))
+            others, owners = others[keep], owners[keep]
+        if others.size == 0:
+            return body, others, owners, {}
+        floor = np.zeros(3)
+        # The things that reach into the band: a thing below its floor is walked or driven over.
+        world = np.eye(3)
+        wc, wr = _extents(model, data, others, world, floor)
+        tops = {}
+        for o, top in zip(owners.tolist(), (wc[:, 2] + wr[:, 2]).tolist(), strict=True):
+            tops[o] = max(tops.get(o, -np.inf), top)
+        counts = np.array([tops[o] > self.band[0] + _TOUCH for o in owners.tolist()])
+        # Where each thing in the band is, every tick, for its velocity: where its root body is, not
+        # the middle of its geoms, which a walker's swinging arms move about.
+        velocity = {}
+        for o in set(owners[counts].tolist()):
+            velocity[o] = self._velocity(o, data.xpos[self._owner_body[o]][:2], now)
+        for o in list(self._track):
+            if o not in velocity:
+                del self._track[o]
+        others, owners = others[counts], owners[counts]
+        # Where a thing is in the corridor is where its body is, what can collide: a robot's base,
+        # a walker's legs and hips, not its swinging arms. A thing nothing of which collides is
+        # where its visible geoms are.
+        solid = (model.geom_contype[others] | model.geom_conaffinity[others]) > 0
+        has_solid = {o for o, sd in zip(owners.tolist(), solid.tolist(), strict=True) if sd}
+        keep = solid | ~np.isin(owners, list(has_solid))
+        others, owners = others[keep], owners[keep]
+        return body, others, owners, velocity
 
     def _legs(self, start, heading: float, path) -> list:
         """The legs of the corridor: from ``start`` along the path ahead, or along ``heading``."""
