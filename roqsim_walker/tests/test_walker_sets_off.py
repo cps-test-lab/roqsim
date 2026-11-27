@@ -2,9 +2,8 @@
 
 The encounter: a walker with ``avoidance: {steer: none, stop: true}`` holds for a
 robot in its way, and the robot comes to stand beside its way, 40 degrees off its heading and close.
-The robot is a TurtleBot's shape: a base lower than the walker's scan plane (its obstacle band's
-floor plus 5 cm, 0.15 m) and above it only a lidar and a camera bracket, narrower than the rays'
-spacing. Standing so, it is in the walker's way and no ray finds it.
+The robot is a TurtleBot's shape: a base lower than the walker's obstacle band and above it only a
+lidar and a camera bracket, a few centimetres across. Standing so, its base is in the walker's way.
 """
 
 from __future__ import annotations
@@ -60,7 +59,7 @@ def _engine(tmp_path):
                 "spawn_model": {
                     "model": str(tmp_path / "robot.xml"),
                     "motion": "driven",
-                    # In the walker's way, its lidar on the middle ray: the walker holds for it.
+                    # In the walker's way, its lidar in the walker's corridor: the walker holds for it.
                     "pose": {
                         "position": {"x": START[0] + 1.0, "y": START[1]},
                         "orientation": {"yaw": -math.pi / 2},
@@ -138,7 +137,7 @@ def test_a_held_walker_sets_off_once_the_robot_has_gone(held):
 
 
 def test_a_held_walker_holds_for_a_robot_inside_its_corridor_though_clear_of_its_body(held):
-    """73 degrees off, the base 2 cm clear of where its feet go but inside the 0.6 m it stops for.
+    """73 degrees off, the base 2 cm clear of where its feet go but inside the corridor it stops for.
 
     It would pass without touching; it would also pass closer than it stops for, so it holds.
     """
