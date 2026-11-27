@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import mujoco
+import numpy as np
 import pytest
 
 from roqsim.config import load_config_from_dict
@@ -19,6 +20,7 @@ from roqsim.engine import Engine
 from roqsim.plugin import PluginError
 from roqsim_nav.avoidance import (
     NO_AGENT,
+    SERVICE_KEY,
     AvoidanceModel,
     RegistryError,
     resolve_model,
@@ -300,5 +302,45 @@ def test_a_world_where_nobody_asks_for_avoidance_creates_no_model(tmp_path):
         body = engine.ctx.entities.get("mover0").body
         mid = int(model.body_mocapid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body)])
         assert float(engine.ctx.data.mocap_pos[mid][0]) > 0.0, "it never set off"
+    finally:
+        engine.shutdown()
+
+
+def test_a_mover_whose_pose_is_written_submits_the_velocity_it_moves_at(tmp_path):
+    """A mocap body's twist reads zero however fast it goes; the model must see it moving."""
+    engine = Engine(_world(tmp_path, avoidance={"model": STUB}))
+    engine.setup()
+    engine.reset()
+    try:
+        for _ in range(int(2.0 / engine.ctx.dt)):
+            engine.step()
+        model = engine.ctx.blackboard.get(SERVICE_KEY).model
+        (sub,) = model.submissions.values()
+        # its speed, toward its goal (its planned path runs a few centimetres off the line)
+        assert float(np.linalg.norm(sub["vel"])) == pytest.approx(0.5, abs=0.02)
+        assert sub["vel"][0] > 0.45
+    finally:
+        engine.shutdown()
+
+
+def test_a_mover_placed_elsewhere_submits_no_jump_as_velocity(tmp_path):
+    """Moved 3 m between two ticks by something else, it is placed, not moving at 60 m/s."""
+    engine = Engine(_world(tmp_path, avoidance={"model": STUB}))
+    engine.setup()
+    engine.reset()
+    try:
+        for _ in range(int(1.0 / engine.ctx.dt)):
+            engine.step()
+        model, data = engine.ctx.model, engine.ctx.data
+        body = engine.ctx.entities.get("mover0").body
+        mid = int(model.body_mocapid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body)])
+        data.mocap_pos[mid][1] += 3.0
+        stub = engine.ctx.blackboard.get(SERVICE_KEY).model
+        fastest = 0.0
+        for _ in range(int(0.2 / engine.ctx.dt)):
+            engine.step()
+            (sub,) = stub.submissions.values()
+            fastest = max(fastest, float(np.linalg.norm(sub["vel"])))
+        assert fastest < 1.0, f"it submitted {fastest:.1f} m/s for being placed elsewhere"
     finally:
         engine.shutdown()
