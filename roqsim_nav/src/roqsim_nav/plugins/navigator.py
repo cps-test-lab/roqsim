@@ -89,7 +89,7 @@ from ..avoidance import NO_AGENT, SERVICE_KEY, resolve_model, service_for
 from ..avoidance import available as avoidance_models
 from ..behavior import NavCore, NavParams, build_tree
 from ..caution import RETIRED, CautionProbe
-from ..control import LAWS
+from ..control import LAWS, STOPPED
 from ..grid import DEFAULT_RESOLUTION, build_grid, grid_key
 from ..handle import NavHandle, Sequencer
 from ..obstacles import holdable_roots
@@ -418,6 +418,8 @@ class NavigatorPlugin(Plugin):
         self._yields = False
         self._configured_goals: list[tuple] = []
         self._commanded = False
+        #: The ``avoidance:`` keys this mover took from its output, as logged at configure.
+        self.avoidance_defaults_taken: dict = {}
         #: ``(sim time, xy)`` of the last tick, for the velocity of a body whose pose is written.
         self._last_pose: tuple[float, np.ndarray] | None = None
         self._pose_snapshot = (0.0, 0.0, 0.0)
@@ -581,7 +583,21 @@ class NavigatorPlugin(Plugin):
             ),
         )
 
-        avoid = cfg.get("avoidance") or {}
+        avoid = dict(cfg.get("avoidance") or {})
+        # What the embodiment declares for how its mover meets what is in its way, where the world
+        # says nothing: a world's own key wins, and each value taken is logged, so the choice the
+        # default made is never hidden.
+        declared = dict(getattr(self._output, "avoidance_defaults", None) or {})
+        taken = {k: v for k, v in declared.items() if k not in avoid}
+        if taken:
+            logger.info(
+                "navigator %s: avoidance from its %s output: %s",
+                self.entity,
+                type(self._output).__name__,
+                ", ".join(f"{k}={v}" for k, v in sorted(taken.items())),
+            )
+        avoid = {**taken, **avoid}
+        self.avoidance_defaults_taken = taken
         # `avoidance.steer` names the model that gives way for this mover, or 'none' to never
         # deviate. There is no world-level entry to declare: the model appears when a mover asks to
         # be steered, and the first to ask fixes it for the world.
@@ -823,6 +839,9 @@ class NavigatorPlugin(Plugin):
             self._resume_configured_route()
 
         wanted = self._core.pref_vel
+        if float(np.hypot(wanted[0], wanted[1])) < STOPPED:
+            # Its own route asks for no speed: a dwell, or a goal reached.
+            self._caution.leg_ended()
         if self._avoid is not None:
             preferred = wanted
             entity = ctx.entities.get(self.entity)
@@ -892,9 +911,9 @@ class NavigatorPlugin(Plugin):
         if planner is None:
             return  # nothing to route around with: straight legs, and caution is the only answer
         expires = float(ctx.sim_time) + probe.forget_after
-        # EVERY hit, not just the nearest: the rays fan across the corridor, so a wall in front
-        # produces several hits spread along it, and marking the lot outlines how far the obstacle
-        # reaches across the way. Marking only the nearest point leaves a disc narrower than the
+        # EVERY point, not just the nearest: a thing in the corridor reports points across it as
+        # far as it spans it, so a wall in front produces several spread along it, and marking the
+        # lot outlines how far the obstacle reaches across the way. Marking only the nearest point leaves a disc narrower than the
         # thing it stands for -- the next plan rounds the disc, drives into the same wall half a
         # metre along, and reports a point already inside the mark, so nothing new is learnt and the
         # mover holds there for good.
@@ -1082,7 +1101,13 @@ class NavigatorPlugin(Plugin):
             last, self._last_pose = self._last_pose, (now, pos)
             if last is None or now - last[0] <= 0.0:
                 return np.zeros(2)
-            return (pos - last[1]) / (now - last[0])
+            dt = now - last[0]
+            limit = float(self.config.get("max_speed") or max(1.0, 2.0 * self._state.speed))
+            if float(np.linalg.norm(pos - last[1])) > 2.0 * limit * dt + 0.05:
+                # Further than it can move in a tick: placed elsewhere (a presence change, a
+                # scenario's placement), not moving; measured afresh from where it is now.
+                return np.zeros(2)
+            return (pos - last[1]) / dt
         twist = body_twist(ctx.model, ctx.data, self._bid)
         return np.array([twist.linear[0], twist.linear[1]], dtype=float)
 

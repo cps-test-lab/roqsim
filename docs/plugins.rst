@@ -581,13 +581,22 @@ corner the mover turns at is not in its way. A thing that moves counts when any 
 visual ones included, reaches up into the mover's own ``obstacle_height`` band: a robot's tower is
 part of the robot, and seeing the tower is seeing the whole robot, while a mat it walks over is not
 in its way. Where it is in the corridor is where its body is, its collidable geoms by their extent:
-a robot's base, a walker's legs and hips, not its arms. What is in the way is what
-reaches past the front of the body: a thing already inside the body that reaches past it is in the
-way at once, and one beside the body -- a walker abreast, a shoulder touching -- is not. What the mover holds by a weld moves with it and is not looked
-for. The same corridor decides holding and setting off, so a mover
+a robot's base, a walker's legs and hips, not its arms. What is in the way is what reaches past
+the front of the body, along whichever side of the body it is going: a thing already inside the
+body that reaches past it is in the way at once, and one beside the body -- a walker abreast, a
+shoulder touching -- is not. Nor is what goes along the way at least 0.8 times as fast as the mover:
+walkers side by side, or one a step behind another, do not hold each other up. A thing's velocity
+is measured from where its root body has been over 0.3 s, so one whose pose is written has one.
+What the mover holds by a weld moves with it and is not looked for. The same corridor decides
+holding and setting off, so a mover
 never sets off to pass something closer than it would have stopped for; one held for a robot that
 drives across its way and on waits until the robot's body has left the corridor, and
 ``clear_time`` after.
+
+An embodiment can declare ``avoidance:`` keys for what it moves (``NavOutput.avoidance_defaults``);
+a world's own key wins, and the navigator logs each value it takes from its output. The ``walker``
+output declares a corridor a person's body wide, ``width: 0.46``, so a walker abreast of another at
+a person's spacing is beside it, not in its way.
 
 ``reroute`` is the opt-in that changes that: it remembers where it was stopped as a disc that
 expires, and plans around it. The memory is what makes it work -- the grid is static, so a mover that

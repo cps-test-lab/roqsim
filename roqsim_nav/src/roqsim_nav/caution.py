@@ -87,13 +87,20 @@ _MAX_LEGS = 4
 #: Where across the corridor, as fractions of its half width, a thing in it reports points.
 _ACROSS = np.linspace(-1.0, 1.0, 5)
 
+#: How far back a thing's velocity is measured: its own parts move as it walks (a walker's legs),
+#: and a velocity taken over one tick would read a stride as a dash.
+_VELOCITY_WINDOW = 0.3
+
+#: What moves along the mover's way at least this share of its speed is going away as fast as the
+#: mover comes, and is not in its way: walkers side by side, or one a step behind another.
+_ALONG = 0.8
+
 
 def subtree_geoms(model, body_id: int) -> set[int]:
     """Every geom of ``body_id`` and its descendants.
 
-    Needed because ``mj_multiRay``'s ``bodyexclude`` takes a single body: a robot is a base link plus
-    wheels plus sensor mounts, so excluding only its root would leave it seeing its own wheels a few
-    centimetres ahead and concluding it was permanently blocked.
+    A mover's footprint is its root body's subtree: a robot is a base link plus wheels plus sensor
+    mounts, and a footprint of its root alone would leave its wheels outside it.
     """
     return set(subtree_geom_ids(model, body_id))
 
@@ -165,11 +172,14 @@ class CautionProbe:
         self._others: np.ndarray | None = None
         self._owner: np.ndarray | None = None
         self._entity_of: dict[int, int] = {}
-        #: How far the mover's body reaches ahead of its centre, and its bottom and top: measured
-        #: the first time it looks, and kept. A walker's front moves by a stride as it walks and
-        #: stands, and a corridor that started where its foot happens to be would open and close as
-        #: it settles, so that it set off and stopped again in steps.
-        self._front: tuple[float, float, float] | None = None
+        #: The root body of each thing, where its velocity is measured, and where each thing that
+        #: moves was: thing -> [(t, xy), ...].
+        self._owner_body: dict[int, int] = {}
+        self._track: dict[int, list] = {}
+        #: The mover's body's extent in the frame of its root body (lo, hi), measured the first time
+        #: it looks and kept (:meth:`_front_along`).
+        self._front: tuple | None = None
+        self._root: int | None = None
         #: Last verdict, for status reporting and tests.
         self.blocked = False
         #: The distance from the mover's front to the nearest thing in its corridor along its path,
@@ -216,8 +226,10 @@ class CautionProbe:
         self._own = set(entity_geoms(ctx.model, entity, strict=False))
         bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body or "")
         self._footprint = subtree_geoms(ctx.model, bid) if bid >= 0 else set()
+        self._root = bid
         self._body = np.array(sorted(self._own), dtype=int)
         self._others = None
+        self._front = None
 
     def resolve_ignored(self, ctx) -> None:
         """Resolve ``ignore`` once every entity in the world has registered itself.
@@ -243,10 +255,12 @@ class CautionProbe:
         # Which thing each geom belongs to: a walker's limbs are roots of their own, and are one
         # walker for what counts as in the way.
         self._entity_of = {}
+        self._owner_body = {}
         for k, other in enumerate(ctx.entities.all()):
             if other.body:
                 for g in entity_geoms(model, other, strict=False):
                     self._entity_of.setdefault(int(g), k)
+                self._owner_body[k] = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, other.body)
         self._others = None
         self._resolved = True
 
@@ -258,6 +272,16 @@ class CautionProbe:
         self.gap = None
         self.blocker_xy = None
         self.blocker_points = []
+        self._front = None  # measured again at the run's first look
+        self._track = {}
+
+    def leg_ended(self) -> None:
+        """The mover stands with nowhere to go -- a dwell, a goal reached -- so what a hold left is
+        over: its next leg starts as a mover that was never held, with no settle. Called by its
+        navigator, which knows the difference between that and a tick an avoidance model leaves
+        without speed, which ends no hold."""
+        self._was_blocked = False
+        self._clear_since = None
 
     def blocked_for(self, now: float) -> float:
         """How long the way has been blocked without a break, in seconds. ``0.0`` when clear."""
@@ -288,7 +312,9 @@ class CautionProbe:
             return False
 
         heading = math.atan2(float(pref_vel[1]), float(pref_vel[0]))
-        gap, points = self._ahead(ctx, origin_xy, heading, path, self.lookahead)
+        gap, points = self._ahead(
+            ctx, origin_xy, heading, path, self.lookahead, now=float(ctx.sim_time), speed=speed
+        )
         self.gap = gap
         now = float(ctx.sim_time)
         if gap is not None:
@@ -340,7 +366,9 @@ class CautionProbe:
                 self._radius = max(self._radius, d + float(model.geom_rbound[g]))
         return self._radius
 
-    def _ahead(self, ctx, origin_xy, heading: float, path, reach: float):
+    def _ahead(
+        self, ctx, origin_xy, heading: float, path, reach: float, now: float = 0.0, speed=None
+    ):
         """``(gap, points)``: what lies in the corridor ahead, within ``reach`` of the front.
 
         ``gap`` is the distance along the corridor from the mover's front to the nearest thing in
@@ -385,6 +413,14 @@ class CautionProbe:
         for o, top in zip(owners.tolist(), (wc[:, 2] + wr[:, 2]).tolist(), strict=True):
             tops[o] = max(tops.get(o, -np.inf), top)
         counts = np.array([tops[o] > self.band[0] + _TOUCH for o in owners.tolist()])
+        # Where each thing in the band is, every tick, for its velocity: where its root body is, not
+        # the middle of its geoms, which a walker's swinging arms move about.
+        velocity = {}
+        for o in set(owners[counts].tolist()):
+            velocity[o] = self._velocity(o, data.xpos[self._owner_body[o]][:2], now)
+        for o in list(self._track):
+            if o not in velocity:
+                del self._track[o]
         others, owners = others[counts], owners[counts]
         # Where a thing is in the corridor is where its body is, what can collide: a robot's base,
         # a walker's legs and hips, not its swinging arms. A thing nothing of which collides is
@@ -392,7 +428,7 @@ class CautionProbe:
         solid = (model.geom_contype[others] | model.geom_conaffinity[others]) > 0
         has_solid = {o for o, sd in zip(owners.tolist(), solid.tolist(), strict=True) if sd}
         keep = solid | ~np.isin(owners, list(has_solid))
-        others = others[keep]
+        others, owners = others[keep], owners[keep]
         if others.size == 0:
             return None, []
         legs = self._legs(start, heading, path)
@@ -408,11 +444,7 @@ class CautionProbe:
             o3 = np.array([a[0], a[1], 0.0])
             c, r = _extents(model, data, others, axes, o3)
             if k == 0:
-                own_c, own_r = _extents(model, data, body, axes, o3)
-                own_lo, own_hi = (own_c - own_r).min(axis=0), (own_c + own_r).max(axis=0)
-                if self._front is None:
-                    self._front = (float(own_hi[0]), float(own_lo[2]), float(own_hi[2]))
-                front, z_lo, z_hi = self._front
+                front, z_lo, z_hi = self._front_along(model, data, body, start, heading_of(axes))
                 # From the body's front: what is in the way of its motion ahead. A thing already
                 # inside the body that reaches past its front is in its way at once (its gap is
                 # 0); one beside it, a walker abreast with a touching shoulder, is not ahead of it.
@@ -426,6 +458,10 @@ class CautionProbe:
                 meets &= ~_apart(model, data, others, a, axes, lo, hi)
             else:
                 meets = np.zeros(len(others), dtype=bool)
+            if speed is not None and meets.any():
+                # What goes along the way as fast as the mover comes is not in its way.
+                along = np.array([velocity[o] @ axes[0, :2] for o in owners.tolist()])
+                meets &= along < _ALONG * float(speed)
             for i in np.flatnonzero(meets):
                 dist = covered + max(lo_x, float(c[i, 0] - r[i, 0])) - lo_x
                 near = np.clip(np.array([lo_x, 0.0, 0.0]), c[i] - r[i], c[i] + r[i])
@@ -442,6 +478,45 @@ class CautionProbe:
             if covered >= reach - 1e-9:
                 break
         return best, points
+
+    def _front_along(self, model, data, body, start, heading: float):
+        """``(front, bottom, top)``: how far the mover's body reaches ahead of its centre along
+        ``heading``, and its bottom and top.
+
+        Its extent is measured once, in the frame of its own root body, and kept: a walker's front
+        moves by a stride as it walks and stands, and a corridor that started where its foot
+        happens to be would open and close as it settles. The front along a heading is then where
+        that extent reaches along it, turned with the body: a body that is not round in plan (a
+        long cart, a robot not yet facing its first goal) has the front of the side it is going.
+        """
+        yaw = self._yaw(data)
+        if self._front is None:
+            c, s_ = math.cos(yaw), math.sin(yaw)
+            axes = np.array([[c, s_, 0.0], [-s_, c, 0.0], [0.0, 0.0, 1.0]])
+            own_c, own_r = _extents(model, data, body, axes, np.array([start[0], start[1], 0.0]))
+            lo, hi = (own_c - own_r).min(axis=0), (own_c + own_r).max(axis=0)
+            self._front = (lo, hi)
+        lo, hi = self._front
+        turn = heading - yaw
+        u = np.array([math.cos(turn), math.sin(turn)])
+        corners = np.array([[x, y] for x in (lo[0], hi[0]) for y in (lo[1], hi[1])])
+        return float((corners @ u).max()), float(lo[2]), float(hi[2])
+
+    def _yaw(self, data) -> float:
+        """The heading of the mover's root body in the plane, 0 where it has none."""
+        if self._root is None or self._root < 0:
+            return 0.0
+        m = data.xmat[self._root].reshape(3, 3)
+        return math.atan2(float(m[1, 0]), float(m[0, 0]))
+
+    def _velocity(self, owner: int, xy, now: float) -> np.ndarray:
+        """A thing's planar velocity, from where it was over the last :data:`_VELOCITY_WINDOW`."""
+        seen = self._track.setdefault(owner, [])
+        seen.append((now, np.array(xy, dtype=float)))  # a copy: `xy` may be a view of mjData
+        while len(seen) > 2 and now - seen[1][0] >= _VELOCITY_WINDOW:
+            seen.pop(0)
+        t0, p0 = seen[0]
+        return (seen[-1][1] - p0) / (now - t0) if now - t0 > 1e-6 else np.zeros(2)
 
     def _legs(self, start, heading: float, path) -> list:
         """The legs of the corridor: from ``start`` along the path ahead, or along ``heading``."""
@@ -489,6 +564,8 @@ class CautionProbe:
                 ],
                 dtype=int,
             )
+            for g, o in zip(geoms, self._owner.tolist(), strict=True):
+                self._owner_body.setdefault(o, int(model.body_rootid[model.geom_bodyid[g]]))
         return self._others, self._owner
 
 
@@ -518,6 +595,11 @@ def _held_bodies(model, data, own_geoms) -> set[int]:
     # A held body takes what hangs from it along: a tote's lid, a tray's load.
     roots = {int(model.body_rootid[b]) for b in held}
     return {b for b in range(model.nbody) if int(model.body_rootid[b]) in roots and b != 0}
+
+
+def heading_of(axes) -> float:
+    """The heading of a frame's x axis in the plane."""
+    return math.atan2(float(axes[0, 1]), float(axes[0, 0]))
 
 
 def _apart(model, data, geoms, start, axes, lo, hi) -> np.ndarray:
