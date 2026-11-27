@@ -84,7 +84,7 @@ from .render_api import (
     Setting,
     StateSnapshot,
 )
-from .rendering import _vopt, set_camera_planes, software_rendered
+from .rendering import _vopt, check_planes, posed_gl_camera, set_camera_planes, software_rendered
 
 _logger = logging.getLogger(__name__)
 
@@ -311,6 +311,7 @@ class FilamentRenderer(Renderer):
         principal_point=True,
         non_square_pixels=True,
         moving_only=False,
+        posed=True,
     )
     SETTINGS = {
         "shadows": Setting(True, "draw shadows (their kind is the model's filament.shadows.type)"),
@@ -593,6 +594,18 @@ class FilamentRenderer(Renderer):
     def _camera(self, model, data, request: CameraRequest):
         """The ``mjrf.Camera`` of *request* and its planes ``(near, far, orthographic)``."""
         cam = request.camera.mujoco_camera
+        spec = request.camera
+        if spec.posed:
+            # The request's pose and intrinsics, between its planes (the model's where it names none).
+            extent = float(model.stat.extent)
+            near = spec.near if spec.near is not None else float(model.vis.map.znear) * extent
+            far = spec.far if spec.far is not None else float(model.vis.map.zfar) * extent
+            check_planes(near, far)
+            gl = mujoco.MjvGLCamera()
+            posed_gl_camera(
+                gl, request.pos, request.quat, spec.intrinsics, spec.width, spec.height, near, far
+            )
+            return self._mjrf_camera(gl)
         if isinstance(cam, mujoco.MjvCamera):
             vcam = cam
         elif cam is not None:
@@ -610,6 +623,10 @@ class FilamentRenderer(Renderer):
                 f"far clip plane {gl.frustum_far:g} m is not beyond the near one "
                 f"{gl.frustum_near:g} m"
             )
+        return self._mjrf_camera(gl)
+
+    def _mjrf_camera(self, gl):
+        """The ``mjrf.Camera`` of the GL camera *gl*, and its planes ``(near, far, orthographic)``."""
         out = self._mjrf.Camera(
             pos=np.asarray(gl.pos, np.float32),
             forward=np.asarray(gl.forward, np.float32),
