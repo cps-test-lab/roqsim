@@ -61,6 +61,19 @@ class Cams(Plugin):
             )
             for name, (w, h) in (("front", (32, 24)), ("top", (16, 16)))
         ]
+        if self.config.get("posed"):
+            # A camera at a pose of its own, no camera of the model behind it.
+            posed = ctx.render.view_at(
+                "stub/posed",
+                width=20,
+                height=10,
+                intrinsics=(18.0, 18.0, 9.5, 4.5),
+                pos=[0.5, -1.0, 0.4],
+                quat=[0.5, 0.5, -0.5, -0.5],
+                images=images,
+            )
+            posed.wants = lambda i=images: i
+            self.views.append(posed)
 
 
 def _engine(
@@ -71,6 +84,7 @@ def _engine(
     lens=False,
     address=None,
     bodies="all",
+    posed=False,
 ) -> Engine:
     address = address or f"unix:{tmp_path / 'render.sock'}"
     socket_settings = {
@@ -95,6 +109,7 @@ def _engine(
                         "geomgroup": geomgroup,
                         "lens": lens,
                         "bodies": bodies,
+                        "posed": posed,
                     }
                 }
             ],
@@ -322,6 +337,31 @@ def test_non_square_pixels_are_refused_by_a_server_that_draws_only_square_ones(t
     engine = _engine(tmp_path, settings={"principal_point": True}, lens="anisotropic")
     with pytest.raises(PluginError, match=r"non-square pixels \(fx != fy\)"):
         engine.setup()
+
+
+def test_a_posed_camera_is_refused_by_a_server_that_does_not_declare_it(tmp_path):
+    engine = _engine(tmp_path, posed=True)
+    with pytest.raises(PluginError, match="a camera at a given pose"):
+        engine.setup()
+
+
+def test_a_server_that_declares_posed_is_sent_the_pose_of_a_posed_camera(tmp_path):
+    engine = _engine(tmp_path, settings={"posed": True, "principal_point": True}, posed=True)
+    engine.setup()
+    engine.reset()
+    try:
+        engine.step()
+    finally:
+        engine.shutdown()
+    report = json.loads((tmp_path / "report.json").read_text())
+    poses = report["request_poses"]
+    assert poses["stub/posed"] == {
+        "posed": True,
+        "pos": [0.5, -1.0, 0.4],
+        "quat": [0.5, 0.5, -0.5, -0.5],
+    }
+    assert poses["stub/front"]["posed"] is False
+    assert report["request_intrinsics"]["stub/posed"] == [18.0, 18.0, 9.5, 4.5]
 
 
 def _free_port() -> int:

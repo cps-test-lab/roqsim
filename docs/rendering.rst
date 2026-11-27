@@ -138,6 +138,140 @@ On some GPUs MuJoCo's default 4x MSAA is not bit-reproducible from run to run (a
 one level); a world that needs identical bytes sets ``<visual><quality offsamples="0"/></visual>``
 in its model.
 
+.. _views-file:
+
+Drawing a list of views
+-----------------------
+
+A picture drawn where a real camera stood -- its pose, its focal lengths, a principal point off the
+image centre, its roll -- comes from a *views file*: a list of cameras, each a name, a size, ``fx fy
+cx cy`` in pixels and a pose. Every renderer that declares ``posed`` draws it.
+
+.. code-block:: yaml
+
+   convention: colmap        # a preset, or {axes: ..., rotation: ..., pixel_origin: ...}
+   near: 0.05                # optional, m; default 0.01
+   far: 30.0                 # optional, m; default the model's own far plane
+   views:
+     - name: "view_0001"     # unique; the file stem of its images
+       width: 640
+       height: 480
+       fx: 600.0
+       fy: 600.0
+       cx: 320.0
+       cy: 240.0
+       R: [[1, 0, 0], [0, 0, -1], [0, 1, 0]]   # world to camera: looking along +y, level
+       position: [1.0, -2.0, 0.5]
+
+The file is JSON or YAML, read by its extension, and it names its convention: a preset, or all three
+keys. A file that names neither is refused, and so is an unknown preset, naming the presets, the
+keys and the command below; nothing is read with a default.
+
+``axes``
+   ``opencv``: the camera frame is x right, y down, z forward into the scene (also ROS's camera
+   optical frame). ``mujoco``: x right, y up, looking down -z (MuJoCo, OpenGL).
+``rotation``
+   ``world_to_camera``: ``x_cam = R (x_world - position)``; ``t`` may be given in place of
+   ``position``, ``x_cam = R x_world + t``. ``camera_to_world``: ``x_world = R x_cam + position``,
+   the columns of ``R`` being the camera's axes in the world.
+``pixel_origin``
+   ``corner``: ``cx, cy`` count from the image's top-left corner, so the top-left pixel's centre is
+   ``(0.5, 0.5)``. ``centre``: from the top-left pixel's centre, which is ``(0, 0)``.
+
+The presets name the sets the data comes in, after where it comes from:
+
+.. roqsim-view-presets::
+
+A calibration's ``rvec`` and ``tvec`` are the ``opencv`` preset with ``R = cv2.Rodrigues(rvec)[0]``
+and ``t = tvec``. Anything else is written as the keys: a camera-to-world pose in OpenGL's axes with
+its principal point counted from the pixel corner is ``{axes: mujoco, rotation: camera_to_world,
+pixel_origin: corner}``.
+
+Under every convention: positions are metres in the world frame of the target as built (after its
+components spawn); ``fx, fy, cx, cy`` are pixels of the image written, at its ``width`` and
+``height``; x counts right from the image's left edge and y down from its top edge. The rotation is
+exactly one of ``R`` (3x3 rows, orthonormal with determinant +1 to 1e-3, drawn as the rotation
+nearest it, so a matrix written to four or more decimals reads; ``--check`` warns where that
+rotation moves the picture by more than a tenth of a pixel) or ``quat``: a list is
+``w, x, y, z``, a mapping ``{x, y, z, w}`` names its parts as a ROS message does, and under ``ros``
+only the mapping is admitted, since a ROS list is ``x, y, z, w``. The camera's centre is
+``position``, a list or ``{x, y, z}``.
+
+Drawing it
+~~~~~~~~~~
+
+.. code-block:: bash
+
+   roqsim render <target> --views FILE --out DIR [--images rgb,depth,segmentation]
+                 [--renderer NAME] [--state run.mcap [--at T]] [--set k=v] [--override f.yaml]
+                 [--geomgroup N,...] [--check]
+
+The target is anything ``roqsim render`` takes; with ``--state`` the recording names its world and
+``--at`` picks the moment. Every view of the file is drawn by one renderer, opened once, in batches
+from one state, so a file of thousands of views of different sizes is one process. ``--out`` is a
+directory, and per view it holds each image ``--images`` asks for (colour alone by default, the same
+for every renderer):
+
+* ``<name>.png``: colour, 8-bit RGB as the renderer gives it;
+* ``<name>.depth.npy``: float32 metres along the view axis (z-depth, not the distance along the
+  pixel's ray), ``+inf`` where nothing was drawn;
+* ``<name>.seg.png``: a 16-bit greyscale PNG, per pixel an index into the manifest's ``legend``
+  (0: background; each other names the object's type, id, name, body and entity).
+  :func:`roqsim.views.read_segmentation` gives it as uint16; an array made from the image as Pillow
+  opens it is uint16 or int32, depending on the Pillow version, with the same indices.
+
+Two views whose files would be one, such as ``x.seg`` beside ``x`` with segmentation asked for, are
+refused, naming both, before anything is drawn.
+
+``manifest.json`` lists what drew them: roqsim's version, the target (and the recording and its
+moment), the renderer with its settings and capabilities, the world's conditions (``bake_used``),
+the views file with its sha256 and its convention, the images, the depth convention, the legend,
+and per view its size, its intrinsics and pose in roqsim's form, its clip planes and each file with
+its sha256. A renderer that does not give an image asked for, or a posed camera, is refused with the
+reason, before the world compiles where ``--renderer`` names it; nothing is drawn another way.
+``--size``, ``--view``, ``--focus``, ``--camera``, ``--camera-path``, ``--overlay``,
+``--from``/``--to``, ``--fps``, ``--speed`` and ``--show`` are refused beside ``--views``: the file
+states every camera, at one moment, and it is drawn into a directory of images.
+
+``--check`` draws nothing. It says per view, on stderr, how it read the file -- where the camera
+stands, which way it looks and what is up in the world frame, and where the principal point lies in
+the picture -- so that a wrong preset shows before a picture is drawn::
+
+   view_0001 (colmap): stands at x -2.000, y 0.000, z 1.000 m; looks along +1.00 +0.00 +0.00,
+   toward +x, level; up is +0.00 +0.00 +1.00, toward +z, rolled 0°; principal point 0.0 px right
+   of and 0.0 px above the image centre (640x480)
+
+It warns, without refusing, where a wrong convention typically shows: a picture whose up points
+down the world's z ("upside down"), a principal point outside the image, or one more than a quarter
+of the image from its centre. The JSON line carries the same per view under ``reading``.
+
+From Python, :func:`roqsim.views.render_views` is the same, for a target or for a compiled model and
+its data, and :func:`roqsim.views.write_views` writes what the command writes:
+
+.. code-block:: python
+
+   from roqsim.views import load_views, render_views, write_views
+
+   views = load_views("views.yaml")
+   for view, frame in render_views("roqsim_scenes:depot", views, images=("rgb", "depth")):
+       frame.rgb, frame.depth          # render_api.Frame
+   for view, frame in render_views((model, data), views):   # a model and its state, as they are
+       ...
+   write_views("renders/", render_views((model, data), views), {"target": "mine"})
+
+Finding the conventions without the docs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``roqsim views describe`` prints the keys, the presets and the units; with a preset it also prints
+a ready example file in that preset's form, every key commented, which is a valid views file as it
+stands. ``--json`` gives the same as one document.
+
+.. code-block:: bash
+
+   roqsim views describe                   # the conventions, as comments
+   roqsim views describe colmap > v.yaml   # ...and an example file to fill in
+   roqsim views describe ros --json
+
 A renderer of your own
 ----------------------
 
@@ -157,8 +291,10 @@ intrinsics, ``(fx, fy, cx, cy)`` in pixels as MuJoCo projects it (a model camera
 and ``focal``/``principal``, or the symmetric pinhole of its ``fovy``; none for an orthographic camera or a ``fovy`` of 0, which
 project through ``fovy``); a renderer declares whether it
 projects an off-centre principal point (``principal_point``) and non-square pixels
-(``non_square_pixels``), and a camera that needs what its renderer does not project is refused at
-load, or when a tool draws through it, rather than drawn wrong.
+(``non_square_pixels``), and whether it draws a *posed* camera (``posed``): one with no camera of
+the model behind it, drawn at the pose and intrinsics its request carries, as a views file states
+them. A camera that needs what its renderer does not project or draw is refused at load, or when a
+tool draws through it, rather than drawn wrong.
 
 A renderer that brings its own static world (a captured splat) and leaves the static geometry out
 (``draws_static=False``) can still give the robots MuJoCo's own pictures: it opens a
