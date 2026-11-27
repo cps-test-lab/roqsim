@@ -1056,7 +1056,6 @@ def test_a_run_after_one_that_ended_held_walks_off_as_a_fresh_one(tmp_path):
         engine.shutdown()
 
 
-
 def test_a_route_given_to_a_held_mover_walks_off_as_a_fresh_one(tmp_path):
     """A new route starts as one never held: the pace a hold left behind does not carry into it."""
     pace = {**PACE, "tau": 0.5}
@@ -1085,6 +1084,7 @@ def test_a_route_given_to_a_held_mover_walks_off_as_a_fresh_one(tmp_path):
         assert first_half_second(engine) == pytest.approx(walked_fresh, abs=0.02)
     finally:
         engine.shutdown()
+
 
 def _following(tmp_path, leader_speed):
     """The cart, and a second mover 0.3 m ahead of its front on the same line, going the same way."""

@@ -240,6 +240,14 @@ def _number(value) -> bool:
 
 def _params_errors(where: str, cls, steer: str, params) -> list[str]:
     """Keys of *params* the model *steer* does not accept."""
+    retired = getattr(cls, "retired_params", {}) or {}
+    named = [
+        f"'{where}.{key}' is not read by avoidance model {steer!r} any more: {why}"
+        for key, why in retired.items()
+        if key in (params or {})
+    ]
+    if named:
+        return named
     schema = set(getattr(cls, "params_schema", ()) or ())
     unknown = sorted(set(params or {}) - schema) if schema else []
     if not unknown:
@@ -1117,7 +1125,7 @@ class NavigatorPlugin(Plugin):
         cfg = self.config
         self._agent = self._avoid.add_agent(
             self.entity,
-            radius=self.radius(ctx),
+            radius=self._agent_radius(ctx),
             max_speed=float(cfg.get("max_speed", max(1.0, 2.0 * self._state.speed))),
             # Apparatus yields; the subject does not. Opting out still occupies an agent, so others
             # go round this mover -- it simply never gives way itself, which is what keeps a
@@ -1125,6 +1133,19 @@ class NavigatorPlugin(Plugin):
             yields=self._yields,
             params=cfg.get("params") or {},
         )
+        if self._yields:
+            # What it never stops for, it never gives way to either.
+            for name in self._caution.ignore:
+                self._avoid.exclude(self._agent, name)
+
+    def _agent_radius(self, ctx) -> float:
+        """This mover's disc to the avoidance model: the one its embodiment declares for avoidance
+        (:attr:`NavOutput.agent_radius`: a walker's is a person's, whatever footprint it plans
+        with), or else its ``radius`` or measured footprint (:meth:`radius`, the planner's)."""
+        declared = getattr(self._output, "agent_radius", None)
+        if declared is not None:
+            return float(declared)
+        return self.radius(ctx)
 
     def _ensure_solved(self, ctx) -> None:
         """Make sure this step's avoidance solve has happened, whoever gets here first."""

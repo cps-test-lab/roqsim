@@ -66,9 +66,22 @@ batched model can compute every agent at once and the order plugins appear in a 
 `test_avoidance_contract.py` runs against a **stub** and must pass with `rvo2` uninstalled: if it
 needed ORCA, the interface would have been shaped around ORCA.
 
-**Who yields is derived, not configured.** An entity with a navigator is apparatus and gives way; an
-entity without one is the subject, and joins as a non-yielding agent whose state is overwritten from
-ground truth — so the others go round it and it is never pushed by them.
+**Who yields is derived, not configured.** An entity with a navigator that names a model is
+apparatus and gives way. One whose navigator steers by none joins as a non-yielding agent; so does
+every entity without a navigator whose root body moves freely (a mocap body or a free joint, not a
+hinged door) and that stands on the floor (its lowest geom below 0.1 m: a robot driven by its own
+stack, one standing still, a pushed cart, not a tote on a table), as the disc of its extent in the
+plane. Such an agent's state is overwritten from ground truth every tick, its velocity measured
+from where it has been — so the others go round it and it is never pushed by them. One lifted off the floor while it is carried is
+absent. A mover's `ignore` applies to its steering as to its stopping; `orca` cannot leave one
+agent out of another's solve and refuses it by name. Both models keep `clearance` between two discs
+passing (0.24 m), and `clearance_time` more for each m/s they close at (0.06 s): `give_way` on the
+closing speed itself, `orca` by growing each disc by half the clearance and `clearance_time` times its
+own speed, so two keep `clearance_time` times the sum of their speeds -- their closing speed head-on
+and past one standing. A mover's disc is the one its embodiment declares for avoidance
+(`NavOutput.agent_radius`: a walker's is a person's, 0.23 m, whatever `radius` it plans with), or
+else its `radius`, or its measured footprint. A passive agent is the disc its own body reaches; an
+entity nested in another rides inside its carrier's.
 
 `orca` needs `rvo2`, built from source. An extra cannot express its build dependency, so the
 install is two commands: `pip install Cython`, then

@@ -55,6 +55,12 @@ class NavOutput(ABC):
     #: logs each value it takes from here.
     avoidance_defaults: Mapping[str, object] = MappingProxyType({})
 
+    #: The disc this embodiment's mover is to an avoidance model, where the world sets no
+    #: ``radius``: a body whose collision model is wider than what it stands for (a walker's hips)
+    #: declares the width of what it stands for. ``None``: its measured footprint. The planner's
+    #: inflation is not changed by it.
+    agent_radius: float | None = None
+
     def __init__(self, config: dict):
         self.config = config or {}
 

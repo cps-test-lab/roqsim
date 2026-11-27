@@ -37,6 +37,57 @@ SERVICE_KEY = "nav:avoidance"
 #: The id of a mover that has joined no model -- in a world where no mover asked to be steered.
 NO_AGENT = -1
 
+#: How low a thing that moves must reach to stand on the floor and join the model as an agent the
+#: others go round: the default floor of a mover's obstacle band. A box on a shelf or a tote on a
+#: table does not; a robot, a cart, a person does.
+FLOOR_BAND = 0.1
+
+
+def _free_root(model, root: int) -> bool:
+    """Whether the root body ``root`` moves freely: a mocap body, or one whose joint is free."""
+    import mujoco  # noqa: PLC0415
+
+    if root <= 0:
+        return False
+    if int(model.body_mocapid[root]) >= 0:
+        return True
+    first, count = int(model.body_jntadr[root]), int(model.body_jntnum[root])
+    return count > 0 and int(model.jnt_type[first]) == mujoco.mjtJoint.mjJNT_FREE
+
+
+def _planar_radius(model, data, geoms, centre) -> float:
+    """The radius around ``centre`` (xy) the plan view of ``geoms`` reaches: for each, its centre's
+    distance and its own reach in the plane -- a sphere's radius, a capsule's or a cylinder's radius
+    and the part of its half length that lies in the plane, a box's and any other shape's farthest
+    corner of its bounding box (``geom_aabb``) seen from above."""
+    import mujoco  # noqa: PLC0415
+
+    centre = np.asarray(centre, dtype=float)[:2]
+    best = 0.0
+    for g in geoms:
+        rot = data.geom_xmat[g].reshape(3, 3)
+        size = model.geom_size[g]
+        kind = int(model.geom_type[g])
+        if kind == mujoco.mjtGeom.mjGEOM_SPHERE:
+            at, reach = data.geom_xpos[g][:2], float(size[0])
+        elif kind in (mujoco.mjtGeom.mjGEOM_CAPSULE, mujoco.mjtGeom.mjGEOM_CYLINDER):
+            axis = rot[:2, 2]
+            at, reach = data.geom_xpos[g][:2], float(size[0] + size[1] * np.linalg.norm(axis))
+        else:
+            box = model.geom_aabb[g]
+            mid = data.geom_xpos[g] + rot @ box[:3]
+            corners = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
+            pts = mid[:2] + (corners * box[3:]) @ rot[:2, :].T
+            best = max(best, float(np.linalg.norm(pts - centre, axis=1).max()))
+            continue
+        best = max(best, float(np.linalg.norm(np.asarray(at) - centre)) + reach)
+    return best
+
+
+def _lowest(model, data, geoms) -> float:
+    """How low the lowest of ``geoms`` reaches (m), each taken as its bounding sphere."""
+    return min(float(data.geom_xpos[g][2]) - float(model.geom_rbound[g]) for g in geoms)
+
 
 class AvoidanceModel(ABC):
     """One local-avoidance policy for a world.
@@ -56,7 +107,9 @@ class AvoidanceModel(ABC):
       matter.
     * ``yields`` is **semantic**, not "is it the robot": it says whether this model may move the
       agent at all. It is derived, never configured: a navigator with ``steer`` set yields, and
-      every other mover joins as an agent the others go round.
+      every other mover -- a navigator that steers by none, and anything that moves and stands on
+      the floor with no navigator at all (:meth:`AvoidanceService._join_passive`) -- joins as an
+      agent the others go round.
     * Static geometry arrives as the **planner's own polygons**, so the global and local layers
       cannot disagree about where a wall is. A model wanting a distance field derives one in
       :meth:`configure`.
@@ -111,6 +164,15 @@ class AvoidanceModel(ABC):
     def reset(self) -> None:
         """Drop per-run state. Agents and static geometry survive; velocities do not."""
 
+    def exclude(self, aid, other) -> None:
+        """Let ``aid`` never give way to ``other``: a mover's ``ignore``.
+
+        A model that cannot leave one agent out of another's solve raises
+        :class:`NotImplementedError`, and a world asking it to is refused rather than having the
+        ignored agent steered round regardless.
+        """
+        raise NotImplementedError
+
 
 class AvoidanceService:
     """The world's model, plus the once-per-step solve.
@@ -129,13 +191,103 @@ class AvoidanceService:
         self.params = dict(params or {})
         self._solved_step = -1
         self._reset_generation = -1
+        #: Agent id by key, for every agent: a navigator's, and each passive one's.
+        self._aids: dict[str, int] = {}
+        #: The things that move with no navigator of their own: key -> (aid, root body id, geoms).
+        self._passive: dict[str, tuple[int, int, list]] = {}
+        self._joined_passive = False
+        #: Where each passive agent was on the tick before, for its velocity.
+        self._last: dict[str, tuple[float, np.ndarray]] = {}
+        #: ``ignore`` of each navigator, applied once every agent is known: (aid, key).
+        self._exclusions: list[tuple[int, str]] = []
 
     def ensure_solved(self, ctx) -> None:
         step = round(ctx.sim_time / ctx.dt) if ctx.dt else 0
         if step == self._solved_step:
             return
         self._solved_step = step
+        if not self._joined_passive:
+            self._join_passive(ctx)
+        self._submit_passive(ctx)
         self.model.solve(float(ctx.dt))
+
+    def _join_passive(self, ctx) -> None:
+        """Join, as agents the others go round, the things that move and stand on the floor but
+        have no navigator: a robot driven by its own stack, one standing still, a pushed cart.
+
+        At the first solve of a run, once every navigator has joined in its ``on_reset``. What
+        joins is a thing whose root body moves freely: a mocap body, or one with a free joint. A
+        thing hinged or sliding on the world -- a door, a gate, a drawer -- moves only where it is
+        fixed, and the planner's walls and the probe deal with it. Only an entity whose body is
+        that root joins: one nested in another -- a sensor on a robot, an arm on a mobile base --
+        rides inside its carrier's disc. Each is a disc around its root body, of the radius its geoms
+        reach in the plane (its collidable ones, or every one where none collides), each by its
+        shape (:func:`_planar_radius`).
+        """
+        import mujoco  # noqa: PLC0415 - the module stays importable without a model
+
+        from roqsim.presence import entity_geoms  # noqa: PLC0415
+
+        self._joined_passive = True
+        model, data = getattr(ctx, "model", None), getattr(ctx, "data", None)
+        entities = getattr(ctx, "entities", None)
+        if model is None or entities is None:
+            return
+        mujoco.mj_forward(model, data)
+        for entity in entities.all():
+            if entity.name in self._aids or not entity.body:
+                continue
+            bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
+            if bid < 0 or int(model.body_rootid[bid]) != bid or not _free_root(model, bid):
+                continue
+            geoms = entity_geoms(model, entity, strict=False)
+            solid = [g for g in geoms if model.geom_contype[g] or model.geom_conaffinity[g]]
+            geoms = solid or geoms
+            if not geoms:
+                continue
+            if _lowest(model, data, geoms) > FLOOR_BAND:
+                continue
+            radius = _planar_radius(model, data, geoms, data.xpos[bid][:2])
+            aid = self.model.add_agent(
+                entity.name, radius=radius, max_speed=0.0, yields=False, params={}
+            )
+            self._aids[entity.name] = aid
+            self._passive[entity.name] = (aid, bid, list(geoms))
+        for aid, key in self._exclusions:
+            other = self._aids.get(key)
+            if other is None:
+                continue
+            try:
+                self.model.exclude(aid, other)
+            except NotImplementedError:
+                raise RegistryError(
+                    f"avoidance model {self.ref!r} cannot leave one agent out of another's solve, "
+                    f"so a mover's `ignore: [{key}]` cannot apply to its steering. Steer that mover "
+                    f"with a model that can (give_way), or drop the ignore."
+                ) from None
+
+    def _submit_passive(self, ctx) -> None:
+        """Each passive agent where it is, at the velocity it moves at, measured from the tick
+        before (a body whose pose is written has no velocity of its own). One lifted off the floor
+        -- a tote being carried -- is absent to the others while it is."""
+        if not self._passive:
+            return
+        model, data = ctx.model, ctx.data
+        now = float(ctx.sim_time)
+        for key, (aid, bid, geoms) in self._passive.items():
+            pos = np.array(data.xpos[bid][:2], dtype=float)
+            last = self._last.get(key)
+            vel = (pos - last[1]) / (now - last[0]) if last and now > last[0] else np.zeros(2)
+            self._last[key] = (now, pos)
+            entity = ctx.entities.get(key)
+            present = bool(entity.present) if entity is not None else True
+            lifted = _lowest(model, data, geoms) > FLOOR_BAND
+            self.model.submit(aid, pos, vel, np.zeros(2), present=present and not lifted)
+
+    def exclude(self, aid, key: str) -> None:
+        """Let agent ``aid`` never give way to the entity ``key``: its navigator's ``ignore``.
+        Applied once every agent has joined, at the first solve of the run."""
+        self._exclusions.append((aid, key))
 
     def ensure_reset(self, ctx) -> None:
         """Reset the model once per reset of the world, whichever mover gets here first.
@@ -152,11 +304,14 @@ class AvoidanceService:
 
     def reset(self) -> None:
         self._solved_step = -1
+        self._last = {}
         self.model.reset()
 
     # -- the model's own surface, forwarded so a caller holds one object ------------------------
     def add_agent(self, key, **kw):
-        return self.model.add_agent(key, **kw)
+        aid = self.model.add_agent(key, **kw)
+        self._aids[str(key)] = aid
+        return aid
 
     def add_static(self, polygons) -> None:
         self.model.add_static(polygons)
