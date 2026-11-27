@@ -77,13 +77,12 @@ _TUNING = (
     "ignore",
 )
 
-#: Keys the probe read when it looked along rays, and why nothing reads them now: a world that sets
-#: one is refused with this, rather than having it silently ignored.
+#: Keys nothing reads, each with why: a world that sets one is refused with this, rather than having
+#: it silently ignored.
 RETIRED = {
-    "rays": "the probe no longer samples its corridor with rays; it fills the corridor in, so "
-    "there is no ray count to set",
-    "height": "the probe no longer scans at one height; it looks at the whole height of the mover's "
-    "body, and counts what reaches into its obstacle_height band",
+    "rays": "the probe fills its corridor in rather than sampling it, so there is no ray count to set",
+    "height": "the probe looks at the whole height of the mover's body and counts what reaches into "
+    "its obstacle_height band, so there is no one height to set",
 }
 
 #: How many legs of the path ahead the corridor follows at most.
