@@ -22,7 +22,7 @@ A *views file* (JSON or YAML) names its convention and lists its views::
     near: 0.05                # optional, m (default 0.01)
     far: 30.0                 # optional, m (default: the model's own far plane)
     views:
-      - {name: "2_1276", width: 353, height: 628, fx: 623.8, fy: 626.5, cx: 176.5, cy: 314.0,
+      - {name: "view_0001", width: 640, height: 480, fx: 600.0, fy: 600.0, cx: 320.0, cy: 240.0,
          R: [[...], [...], [...]], position: [x, y, z]}
 
 Three keys state a convention (:data:`KEYS`); a preset names a set of them after where its data comes
