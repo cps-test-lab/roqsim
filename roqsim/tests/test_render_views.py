@@ -192,6 +192,26 @@ def test_a_view_that_cannot_be_read_as_written_is_refused_by_name(conv, override
     _refused(_doc(conv, **override), match, tmp_path)
 
 
+def test_a_rotation_written_to_a_few_decimals_reads_as_the_rotation_it_states():
+    # A camera's R as a reconstruction or a calibration prints it, rounded, is no rotation to 1e-6;
+    # it reads as the rotation nearest it, and a scaled or mirrored matrix is still refused.
+    angle = math.radians(28.0)  # rounded to six decimals, 1.1e-6 from a rotation
+    c, s = math.cos(angle), math.sin(angle)
+    exact = np.array([[c, -s, 0.0], [0.0, 0.0, -1.0], [s, c, 0.0]])
+    entry = {"name": "v", "width": 64, "height": 48, "fx": 50.0, "fy": 50.0, "cx": 32, "cy": 24}
+    entry["position"] = [0.5, -1.0, 1.2]
+    want = V.View.from_pose("colmap", **entry, R=exact.tolist())
+    for decimals in (6, 4):
+        written = np.round(exact, decimals)
+        assert np.abs(written @ written.T - np.eye(3)).max() > 1e-6
+        view = V.View.from_pose("colmap", **entry, R=written.tolist())
+        assert np.allclose(view.rotation @ view.rotation.T, np.eye(3), atol=1e-12)
+        assert np.allclose(view.quat, want.quat, atol=10.0**-decimals)
+    for wrong in (1.01 * exact, exact @ np.diag([1.0, 1.0, -1.0])):
+        with pytest.raises(V.ViewsError, match="not a rotation"):
+            V.View.from_pose("colmap", **entry, R=wrong.tolist())
+
+
 def test_a_name_used_twice_is_refused(tmp_path):
     doc = _doc()
     doc["views"].append(dict(doc["views"][0]))

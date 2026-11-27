@@ -142,6 +142,11 @@ DESCRIBE = "roqsim views describe <preset>"
 #: The near clip plane a view draws with unless it states one: a sensor camera's ``render_near``.
 DEFAULT_NEAR = 0.01
 
+#: How far a written ``R`` may be from a rotation (``R Rᵀ`` from ``I``, ``det R`` from 1): its entries
+#: rounded to four decimals stay inside, a scaled or mirrored matrix does not. The rotation nearest
+#: it is what is drawn.
+ROTATION_TOLERANCE = 1e-3
+
 #: What a view's name may be: it becomes a file stem.
 _NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -520,13 +525,15 @@ def _rotation(entry, conv: Convention, errors) -> np.ndarray | None:
             return None
         err = float(np.abs(mat @ mat.T - np.eye(3)).max())
         det = float(np.linalg.det(mat))
-        if err > 1e-6 or abs(det - 1.0) > 1e-6:
+        if err > ROTATION_TOLERANCE or abs(det - 1.0) > ROTATION_TOLERANCE:
             errors.append(
                 f"'R' is not a rotation: R Rᵀ differs from I by {err:.2g}, det {det:.6g} "
-                "(orthonormal, det +1, to 1e-6)"
+                f"(orthonormal, det +1, to {ROTATION_TOLERANCE:g})"
             )
             return None
-        return mat
+        # The rotation nearest the matrix as written, to the digits it was written with.
+        u, _, vt = np.linalg.svd(mat)
+        return u @ vt
     q = entry["quat"]
     if isinstance(q, Mapping):
         quat = _vector(q, 4, "quat", errors, names=("x", "y", "z", "w"))
