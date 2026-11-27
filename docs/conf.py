@@ -13,7 +13,7 @@ copyright = "2026, Frederik Pasch"
 author = "Frederik Pasch"
 release = "0.1.0"
 
-extensions = ["plugin_docs", "model_docs", "world_docs", "asset_docs"]
+extensions = ["plugin_docs", "model_docs", "world_docs", "asset_docs", "views_docs"]
 templates_path = []
 
 # All docs are reStructuredText (the architecture doc is architecture.rst), so the built site is
