@@ -868,8 +868,9 @@ def write_views(out_dir: str | Path, rendered: RenderedViews, extra: Mapping | N
     """Draw *rendered* into *out_dir* and write its ``manifest.json``; returns the manifest.
 
     Per view, each image asked for: ``<name>.png`` (8-bit RGB as the renderer gave it),
-    ``<name>.depth.npy`` (float32, :data:`DEPTH_CONVENTION`), ``<name>.seg.png`` (uint16 indices
-    into the manifest's ``legend``, 0 for background).
+    ``<name>.depth.npy`` (float32, :data:`DEPTH_CONVENTION`), ``<name>.seg.png`` (a 16-bit
+    greyscale PNG of indices into the manifest's ``legend``, 0 for background;
+    :func:`read_segmentation` reads it).
     """
     from PIL import Image  # noqa: PLC0415
 
@@ -934,6 +935,24 @@ _EXAMPLE = {"width": 640, "height": 480, "fx": 500.0, "fy": 500.0, "cx": 319.5, 
 _EXAMPLE_POSITION = [-2.0, 0.0, 1.0]
 #: Its axes in the world as columns, MuJoCo's camera frame: right -y, up +z, back -x.
 _EXAMPLE_C2W_MJ = np.array([[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+
+
+def read_segmentation(path: str | Path) -> np.ndarray:
+    """A written ``<name>.seg.png`` as its ``(H, W)`` uint16 legend indices.
+
+    Pillow opens a 16-bit greyscale PNG as ``I;16`` or as 32-bit ``I``, depending on its version, so
+    an array made from the opened image is uint16 with one and int32 with another. The indices are
+    the same; this returns them in the type they were written in.
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    with Image.open(path) as image:
+        if image.mode not in ("I;16", "I"):
+            raise ViewsError(
+                f"{path}: not a segmentation image: a 16-bit greyscale PNG is expected, "
+                f"this one opens as mode {image.mode!r}"
+            )
+        return np.asarray(image).astype(np.uint16)
 
 
 def _clean(values) -> list:

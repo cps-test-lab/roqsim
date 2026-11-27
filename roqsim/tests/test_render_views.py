@@ -328,10 +328,13 @@ def test_written_views_are_lossless_and_named_in_the_manifest(tmp_path):
     files = manifest["views"][0]["files"]
     rgb = np.array(Image.open(tmp_path / files["rgb"]["path"]))
     depth = np.load(tmp_path / files["depth"]["path"])
-    seg = np.array(Image.open(tmp_path / files["segmentation"]["path"]))
+    seg_path = tmp_path / files["segmentation"]["path"]
+    seg = V.read_segmentation(seg_path)
     assert rgb.dtype == np.uint8 and rgb.shape == (H, W, 3)
     assert depth.dtype == np.float32 and np.isinf(depth).any()
-    assert seg.dtype == np.uint16
+    # The file itself: its header says 16 bits (byte 24) of greyscale (byte 25), whatever opens it.
+    assert tuple(seg_path.read_bytes()[24:26]) == (16, 0)
+    assert seg.dtype == np.uint16 and seg.shape == (H, W)
     legend = {e["index"]: e for e in manifest["legend"]}
     assert set(np.unique(seg)) <= set(legend)
     assert {legend[i]["name"] for i in np.unique(seg) if i} == {"floor", "box"}
@@ -340,6 +343,35 @@ def test_written_views_are_lossless_and_named_in_the_manifest(tmp_path):
     for record in files.values():
         digest = hashlib.sha256((tmp_path / record["path"]).read_bytes()).hexdigest()
         assert digest == record["sha256"]
+
+
+@pytest.mark.parametrize("opened_as", ["I;16", "I"])
+def test_a_segmentation_image_reads_as_uint16_whichever_way_pillow_opens_it(
+    tmp_path, monkeypatch, opened_as
+):
+    # Pillow versions open a 16-bit greyscale PNG as I;16 or as 32-bit I; the reader gives the
+    # written indices as uint16 for both. 40000 does not fit a signed 16-bit value.
+    indices = np.array([[0, 1, 2], [300, 40000, 65535]], dtype=np.uint16)
+    path = tmp_path / "v.seg.png"
+    Image.fromarray(indices).save(path)
+    real_open = Image.open
+
+    def open_as(file, *args, **kwargs):
+        written = np.asarray(real_open(file, *args, **kwargs)).astype(np.int64) & 0xFFFF
+        image = Image.fromarray(written.astype(np.int32 if opened_as == "I" else np.uint16))
+        assert image.mode == opened_as
+        return image
+
+    monkeypatch.setattr(Image, "open", open_as)
+    seg = V.read_segmentation(path)
+    assert seg.dtype == np.uint16 and np.array_equal(seg, indices)
+
+
+def test_a_picture_that_is_not_a_segmentation_image_is_refused(tmp_path):
+    path = tmp_path / "v.png"
+    Image.fromarray(np.zeros((2, 3, 3), dtype=np.uint8)).save(path)
+    with pytest.raises(V.ViewsError, match="not a segmentation image.*mode 'RGB'"):
+        V.read_segmentation(path)
 
 
 # -- `roqsim render --views` ---------------------------------------------------------------------

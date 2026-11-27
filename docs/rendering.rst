@@ -213,8 +213,10 @@ for every renderer):
 * ``<name>.png``: colour, 8-bit RGB as the renderer gives it;
 * ``<name>.depth.npy``: float32 metres along the view axis (z-depth, not the distance along the
   pixel's ray), ``+inf`` where nothing was drawn;
-* ``<name>.seg.png``: uint16, per pixel an index into the manifest's ``legend`` (0: background; each
-  other names the object's type, id, name, body and entity).
+* ``<name>.seg.png``: a 16-bit greyscale PNG, per pixel an index into the manifest's ``legend``
+  (0: background; each other names the object's type, id, name, body and entity).
+  :func:`roqsim.views.read_segmentation` gives it as uint16; an array made from the image as Pillow
+  opens it is uint16 or int32, depending on the Pillow version, with the same indices.
 
 ``manifest.json`` lists what drew them: roqsim's version, the target (and the recording and its
 moment), the renderer with its settings and capabilities, the world's conditions (``bake_used``),
