@@ -1,13 +1,14 @@
 name: ci
 
-# Five jobs. `core` is the PR gate: no ROS, no nav2, ~minutes, and it runs `make ci` -- every check
+# Six jobs. `core` is the PR gate: no ROS, no nav2, ~minutes, and it runs `make ci` -- every check
 # is a make target, so a contributor reproduces CI exactly with one command and the two cannot
 # drift. `ros` carries the heavy integration (colcon build + the nav2 goal test) and is kept
 # separate so a formatting mistake does not wait behind a robot driving to a goal. `osc` runs the
 # tests gated on scenario-execution with it installed; `core` and `ros` stay without it, where those
 # tests must skip. `franka` builds libfranka from source and runs it against the simulated FR3, which
 # needs a C++ toolchain the other jobs do not. `pages` publishes the documentation `make ci` already
-# built, from main only.
+# built, from main only. `stack` says whether a pull request is below another in a stack: such a one
+# gets lint and smoke only, and the one on top, whose tree holds every one below, the whole of it.
 
 on:
   push:
@@ -15,6 +16,39 @@ on:
   pull_request:
 
 jobs:
+  # A pull request is below another when an open one's head contains its head. Pushed and merged
+  # commits, and a pull request nothing builds on, are always checked in full.
+  stack:
+    name: stack (is another pull request on top?)
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      contents: read
+    outputs:
+      full: ${{ steps.top.outputs.full }}
+    steps:
+      - id: top
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          full=true
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            for other in $(gh pr list --repo "$REPO" --state open --limit 200 \
+                --json number,headRefOid --jq ".[] | select(.number != $NUMBER) | .headRefOid"); do
+              # A compare that fails leaves this one checked in full rather than blocked.
+              status=$(gh api "repos/$REPO/compare/$HEAD...$other" --jq .status) || status=failed
+              if [ "$status" = ahead ]; then
+                echo "$other, the head of another open pull request, contains this one"
+                full=false
+                break
+              fi
+            done
+          fi
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+
   # The whole of `make ci` on the runner image GitHub calls latest; on Ubuntu 24.04, whose Python roqsim
   # keeps supporting, the packages install and every shipped world runs (`make smoke`) -- what an
   # older interpreter breaks first, in minutes. An image that moves to a newer Ubuntu and Python shows
@@ -22,6 +56,7 @@ jobs:
   # require, and publishes the docs.
   core:
     name: ${{ matrix.os == 'ubuntu-latest' && 'core (lint, tests, smoke, docs)' || format('core (smoke) on {0}', matrix.os) }}
+    needs: stack
     strategy:
       fail-fast: false
       matrix:
@@ -53,21 +88,24 @@ jobs:
 
       # lint + test + smoke + check + doc. `make test` skips the ros2_ws suite when ROS is not
       # sourced, which is exactly right here -- the `ros` job below owns that half.
-      - name: make ${{ matrix.target }}
-        run: make ${{ matrix.target }}
+      # Below another pull request, lint and smoke: the one on top runs the rest over this tree too.
+      - name: make ${{ (needs.stack.outputs.full == 'true' || matrix.target != 'ci') && matrix.target || 'lint smoke' }}
+        run: make ${{ (needs.stack.outputs.full == 'true' || matrix.target != 'ci') && matrix.target || 'lint smoke' }}
 
       # The site is the docs `make ci` just built, from the same run that linted, tested and
       # scrubbed this commit -- so a published page cannot come from a build that failed. The
       # artifact is produced on pull requests too, where it is downloadable for review; only the
       # `pages` job below publishes it, and only from main.
       - name: Package the docs for GitHub Pages
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && needs.stack.outputs.full == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: build/html
 
   ros:
     name: ros (bridge + nav2 integration)
+    needs: stack
+    if: needs.stack.outputs.full == 'true'
     runs-on: ubuntu-latest
     container:
       image: ros:jazzy
@@ -108,6 +146,8 @@ jobs:
   # `make test-osc` fails rather than skips when scenario-execution is missing or broken.
   osc:
     name: osc (tests that need scenario-execution)
+    needs: stack
+    if: needs.stack.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -134,6 +174,8 @@ jobs:
   # does.
   franka:
     name: franka (libfranka against the simulated FCI)
+    needs: stack
+    if: needs.stack.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
