@@ -35,7 +35,8 @@ a world that asks a renderer for what it cannot give fails then, saying so. Noth
 another renderer.
 
 Nothing here assumes a GL context or the renderer's process: a request carries the camera's pose and
-intrinsics in the world frame, and a frame carries plain arrays, so a renderer in another process
+intrinsics in the world frame (for a *posed* camera, :attr:`CameraSpec.posed`, they are all there is:
+no camera of the model stands behind it, and a renderer that draws one declares ``posed``), and a frame carries plain arrays, so a renderer in another process
 (:mod:`roqsim.render_socket`) stands behind this unchanged. This module imports no GL.
 
 The golden rules hold for every renderer: it reads the snapshot it is handed and never the live
@@ -140,6 +141,9 @@ class RendererCapabilities:
     #: textures hold their light already, divided by the bake's run-time rig of classic lights. A
     #: renderer that lights them itself would light the bake a second time.
     baked_lighting: bool = False
+    #: Whether it draws a posed camera (:attr:`CameraSpec.posed`): one at the pose and intrinsics of
+    #: its request, with no camera of the model behind it.
+    posed: bool = False
 
     def missing(
         self,
@@ -150,9 +154,11 @@ class RendererCapabilities:
         off_centre: bool = False,
         non_square: bool = False,
         moving_only: bool = False,
+        posed: bool = False,
     ) -> list[str]:
         """What of *images*, *model*, decorations, geom groups, an *off_centre* principal point,
-        *non_square* pixels and the moving bodies alone (*moving_only*) this renderer does not give."""
+        *non_square* pixels, the moving bodies alone (*moving_only*) and a camera at a given pose
+        (*posed*) this renderer does not give."""
         out = [f"image {i!r}" for i in images if i not in self.images]
         if model is not None and model not in self.camera_models:
             out.append(f"camera model {model!r}")
@@ -166,6 +172,8 @@ class RendererCapabilities:
             out.append("non-square pixels (fx != fy)")
         if moving_only and not self.moving_only:
             out.append("the moving bodies alone")
+        if posed and not self.posed:
+            out.append("a camera at a given pose")
         return out
 
     def as_dict(self) -> dict:
@@ -183,6 +191,7 @@ class RendererCapabilities:
             "non_square_pixels": self.non_square_pixels,
             "moving_only": self.moving_only,
             "baked_lighting": self.baked_lighting,
+            "posed": self.posed,
         }
 
 
@@ -201,7 +210,9 @@ class CameraSpec:
     ``mujoco_camera`` is the MuJoCo camera it renders through -- a camera id, or for the ``free``
     model the ``MjvCamera`` an in-process caller steers -- so MuJoCo's renderer reproduces exactly the
     picture MuJoCo would draw; every other renderer works from the pose and intrinsics the service
-    computes per tick (:class:`CameraRequest`).
+    computes per tick (:class:`CameraRequest`). A pinhole camera with no ``mujoco_camera`` and with
+    ``intrinsics`` is *posed* (:attr:`posed`): no camera of the model stands behind it, and each
+    request carries the pose it is drawn at (a views file, :mod:`roqsim.views`).
     """
 
     id: str
@@ -237,7 +248,7 @@ class CameraSpec:
     def missing_from(self, caps: RendererCapabilities, images=None, decorate=None) -> list[str]:
         """What of this camera *caps* does not give: its *images* (default: all it may ask for), its
         camera model, its decorations (default: :attr:`decorated`), geom groups, principal point,
-        pixels and bodies."""
+        pixels, bodies and a given pose (:attr:`posed`)."""
         return caps.missing(
             sorted(self.images if images is None else images),
             self.model,
@@ -246,6 +257,14 @@ class CameraSpec:
             self.off_centre,
             self.non_square,
             self.bodies == "moving",
+            self.posed,
+        )
+
+    @property
+    def posed(self) -> bool:
+        """Whether it is drawn at the pose and intrinsics its requests carry, with no model camera."""
+        return (
+            self.mujoco_camera is None and self.model == "pinhole" and self.intrinsics is not None
         )
 
     @property

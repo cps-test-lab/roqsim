@@ -139,7 +139,7 @@ The core's own verbs are top-level rather than in a group: ``roqsim sim`` runs a
 draws one, ``bake`` bakes its lighting with Blender (:doc:`baked_lighting`), ``rebuild`` produces a
 recorded run's sensor streams, and ``state``, ``check``, ``health``,
 ``catalog``, ``plugins`` and ``renderers`` read a world, a run or the
-registries; the core's exporters are the ``roqsim export`` group. Every package tool is
+registries, ``views`` prints the conventions of a views file; the core's exporters are the ``roqsim export`` group. Every package tool is
 ``roqsim <group> <tool>`` (``roqsim/src/roqsim/commands.py``).
 
 **Write it standalone, then link it in — in the same commit.**
